@@ -5,6 +5,7 @@ import json
 from .base import AffiliateProgram
 from ..config import settings
 from ..localize import AMAZON_STORES, get_amazon_store
+from .universal_link import amazon_affiliate_url
 
 
 class AmazonAffiliate(AffiliateProgram):
@@ -25,8 +26,7 @@ class AmazonAffiliate(AffiliateProgram):
 
     def _build_url(self, store_code: str, asin: str) -> str:
         domain = AMAZON_STORES[store_code]["domain"]
-        tag = settings.get_amazon_tag(store_code) or "agentmagnet-21"
-        return f"https://{domain}/dp/{asin}?tag={tag}"
+        return amazon_affiliate_url(domain, asin, store_code) or f"https://{domain}/dp/{asin}"
 
     async def search(self, query: str, max_results: int = 5,
                      language: str = "en", country: str | None = None) -> list[dict]:

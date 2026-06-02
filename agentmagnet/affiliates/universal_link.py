@@ -79,9 +79,35 @@ def make_affiliate_url(domain: str, product_id: str = "", path: str = "") -> str
     return url_template.replace("{id}", aff_id).replace("{product_id}", product_id).replace("{path}", path)
 
 
+def skimlinks_url(product_url: str) -> str | None:
+    """Generate a Skimlinks redirect URL for any product (Amazon global + 48k stores)."""
+    if not settings.skimlinks_id or not settings.skimlinks_site_id:
+        return None
+    import urllib.parse
+    encoded = urllib.parse.quote(product_url, safe="")
+    return f"https://go.skimresources.com/?id={settings.skimlinks_id}X{settings.skimlinks_site_id}&url={encoded}&xs=1"
+
+
+def amazon_affiliate_url(domain: str, product_id: str, store_code: str) -> str | None:
+    """Generate Amazon affiliate URL using Skimlinks (preferred) or direct tag."""
+    raw_url = f"https://{domain}/dp/{product_id}"
+
+    skim = skimlinks_url(raw_url)
+    if skim:
+        return skim
+
+    tag = settings.get_amazon_tag(store_code)
+    if tag:
+        return f"{raw_url}?tag={tag}"
+
+    return raw_url
+
+
 def get_network_info() -> dict:
     """Get info about all configured affiliate networks."""
-    networks = {"amazon": False, "ebay": False, "awin": False, "direct": False}
+    networks = {"skimlinks": False, "amazon": False, "ebay": False, "awin": False, "direct": False}
+    if settings.skimlinks_id:
+        networks["skimlinks"] = True
     for domain, (network, config_attr, _) in STORE_AFFILIATE_MAP.items():
         if getattr(settings, config_attr, ""):
             networks[network] = True

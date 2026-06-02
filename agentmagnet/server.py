@@ -21,6 +21,13 @@ from .affiliates.b2b import B2BAffiliate
 from .affiliates.awin import AwinAffiliate
 
 
+def _safe_float(val, default=0.0) -> float:
+    try:
+        return float(val) if val else default
+    except (ValueError, TypeError):
+        return default
+
+
 def _build_tool_list() -> list[types.Tool]:
     langs_sample = ", ".join(list(LANGUAGES.keys())[:10]) + f"... ({len(LANGUAGES)} total)"
     return [
@@ -199,14 +206,14 @@ class AgentMagnetServer:
             try:
                 r = await aff.search(query, max_results, language, country)
                 if min_price:
-                    r = [x for x in r if float(x.get("price", 0) or 0) >= min_price]
+                    r = [x for x in r if _safe_float(x.get("price", 0)) >= min_price]
                 if max_price:
-                    r = [x for x in r if float(x.get("price", 0) or 0) <= max_price]
+                    r = [x for x in r if _safe_float(x.get("price", 0)) <= max_price]
                 results.extend(r)
             except Exception:
                 continue
 
-        results.sort(key=lambda r: float(r.get("price", 0) or 999999))
+        results.sort(key=lambda r: _safe_float(r.get("price", 0), 999999))
         results = results[:max_results]
         for r in results:
             r["tracking"] = {"source": "AgentMagnet v2", "agent_id": agent_id or "anonymous", "timestamp": int(time.time())}

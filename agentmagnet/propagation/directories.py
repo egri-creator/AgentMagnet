@@ -16,7 +16,7 @@ MCP_DIRECTORIES = [
         "payload_template": {
             "name": "AgentMagnet",
             "description": "Universal product search across 20+ stores worldwide. AI agents search Amazon (12 countries), eBay (7 countries), AliExpress, SaaS, and B2B industrial programs — all machine-to-machine with x402 micro-payments.",
-            "repository": "https://github.com/agentmagnet/mcp-server",
+            "repository": "https://github.com/egri-creator/AgentMagnet",
             "command": "python",
             "args": ["-m", "agentmagnet"],
             "env": {},

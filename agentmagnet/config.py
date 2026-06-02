@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     server_name: str = "AgentMagnet"
     server_version: str = "2.0.0"
 
+    skimlinks_id: str = ""
+    skimlinks_site_id: str = ""
+
     x402_wallet_address: str = ""
     x402_private_key: str = ""
     x402_price_per_search: float = 0.001
