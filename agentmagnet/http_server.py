@@ -14,7 +14,7 @@ from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, HTMLResponse
 from starlette.routing import Route
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -128,6 +128,8 @@ class AgentMagnetHTTPHandler:
             "endpoints": {
                 "POST /mcp": "MCP protocol endpoint",
                 "GET /health": "Health check",
+                "GET /stats": "Agent usage stats JSON",
+                "GET /dashboard": "Real-time web dashboard",
                 "GET /": "This info",
             },
             "example": {
@@ -136,11 +138,73 @@ class AgentMagnetHTTPHandler:
             },
         })
 
+    async def handle_stats(self, request: Request) -> Response:
+        from ..store.db import store, DB_PATH
+        conn = store.conn
+        stats = {
+            "total_agents": conn.execute("SELECT COUNT(*) as c FROM total_usage").fetchone()["c"],
+            "total_searches": conn.execute("SELECT COALESCE(SUM(count),0) as c FROM total_usage").fetchone()["c"],
+            "total_referrals": conn.execute("SELECT COUNT(*) as c FROM referral_network").fetchone()["c"],
+            "cached_queries": conn.execute("SELECT COUNT(*) as c FROM cache").fetchone()["c"],
+            "total_subscriptions": conn.execute("SELECT COUNT(*) as c FROM subscriptions").fetchone()["c"],
+            "total_tx_hashes": conn.execute("SELECT COUNT(*) as c FROM used_tx_hashes").fetchone()["c"],
+            "revenue_from_x402": conn.execute("SELECT COUNT(*) * 0.001 as rev FROM used_tx_hashes").fetchone()["rev"],
+            "top_agents": [dict(r) for r in conn.execute("SELECT agent_id, count FROM total_usage ORDER BY count DESC LIMIT 10").fetchall()],
+        }
+        return JSONResponse(stats)
+
+    async def handle_dashboard(self, request: Request) -> Response:
+        html = """<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentMagnet Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0a0a0f;color:#e4e4e7;padding:20px}
+h1{font-size:1.5rem;font-weight:700;margin-bottom:8px;color:#fff}
+.sub{color:#71717a;font-size:.875rem;margin-bottom:24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:20px}
+.card .label{font-size:.75rem;text-transform:uppercase;color:#71717a;letter-spacing:.05em;margin-bottom:4px}
+.card .value{font-size:1.75rem;font-weight:700;color:#fff}
+.card .subtext{font-size:.75rem;color:#52525b;margin-top:4px}
+table{width:100%;border-collapse:collapse;font-size:.875rem}
+th{text-align:left;padding:8px 12px;color:#71717a;border-bottom:1px solid #27272a;font-weight:500}
+td{padding:8px 12px;border-bottom:1px solid #1f1f23}
+tr:hover td{background:#1a1a1e}
+.badge{display:inline-block;background:#22c55e20;color:#22c55e;padding:2px 8px;border-radius:4px;font-size:.75rem}
+</style>
+</head>
+<body>
+<h1> AgentMagnet</h1>
+<p class="sub">Universal Agent Commerce Layer — Real-time live stats</p>
+<div class="grid" id="stats"></div>
+<h2 style="font-size:1rem;font-weight:600;margin-bottom:12px;color:#fff">Top Agents</h2>
+<table><thead><tr><th>Agent ID</th><th>Searches</th></tr></thead><tbody id="agents"></tbody></table>
+<script>
+async function refresh(){try{
+const r=await fetch('/stats');const d=await r.json();
+document.getElementById('stats').innerHTML=
+`<div class="card"><div class="label">Total Agents</div><div class="value">${d.total_agents}</div></div>
+<div class="card"><div class="label">Total Searches</div><div class="value">${d.total_searches.toLocaleString()}</div></div>
+<div class="card"><div class="label">Referrals</div><div class="value">${d.total_referrals}</div></div>
+<div class="card"><div class="label">Cached Queries</div><div class="value">${d.cached_queries}</div></div>
+<div class="card"><div class="label">x402 Revenue</div><div class="value">$${d.revenue_from_x402.toFixed(3)}</div><div class="subtext">USDC on Base</div></div>
+<div class="card"><div class="label">Subscriptions</div><div class="value">${d.total_subscriptions}</div></div>`;
+document.getElementById('agents').innerHTML=d.top_agents.map(a=>`<tr><td>${a.agent_id}</td><td>${a.count.toLocaleString()}</td></tr>`).join('');
+}catch(e){}}
+refresh();setInterval(refresh,5000);
+</script>
+</body></html>"""
+        return HTMLResponse(html)
+
 
 handler = AgentMagnetHTTPHandler()
 routes = [
     Route("/mcp", endpoint=handler.handle_mcp, methods=["POST", "OPTIONS"]),
     Route("/health", endpoint=handler.handle_health, methods=["GET"]),
+    Route("/stats", endpoint=handler.handle_stats, methods=["GET"]),
+    Route("/dashboard", endpoint=handler.handle_dashboard, methods=["GET"]),
     Route("/", endpoint=handler.handle_root, methods=["GET"]),
 ]
 app = Starlette(

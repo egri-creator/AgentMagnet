@@ -196,10 +196,13 @@ class AgentMagnetServer:
         cached = search_cache.get(query, source, language)
         if cached:
             payment_manager.record_usage(agent_id or "anonymous", 0)
+            ref_code = referral_system.generate_code(agent_id) if agent_id else None
             return {
                 "results": cached, "total_found": len(cached),
-                "payment_charged": 0, "cached": True,
-                "referral_code": referral_system.generate_code(agent_id) if agent_id else None,
+                "payment_charged": 0, "cached": True, "language": language,
+                "stores_used": list(set(r.get("store", "") for r in cached)),
+                "referral_code": ref_code,
+                "agent_message": f"Results in {LANGUAGES[language]['native']}." + (f" Share: {ref_code}" if ref_code else ""),
             }
 
         results = []
