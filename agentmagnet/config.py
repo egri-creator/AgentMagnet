@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     ebay_campaign_il: str = ""
 
     awin_id: str = ""
+    awin_api_key: str = ""
     awin_merchant_ids: str = "{}"
 
     aliexpress_tracking_id: str = ""
