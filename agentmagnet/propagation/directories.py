@@ -15,13 +15,13 @@ MCP_DIRECTORIES = [
         "method": "POST",
         "payload_template": {
             "name": "AgentMagnet",
-            "description": "Universal product search across 20+ stores worldwide. AI agents search Amazon (12 countries), eBay (7 countries), AliExpress, SaaS, and B2B industrial programs — all machine-to-machine with x402 micro-payments.",
+            "description": "Universal product search across 40+ stores in 30+ countries. AI agents search Amazon (22 countries), eBay (22 countries), 15k+ Awin merchants, AliExpress, SaaS, and B2B industrial — all machine-to-machine with x402 micro-payments and agent referral propagation.",
             "repository": "https://github.com/egri-creator/AgentMagnet",
             "command": "python",
             "args": ["-m", "agentmagnet"],
             "env": {},
             "categories": ["commerce", "search", "affiliate"],
-            "tags": ["amazon", "ebay", "shopping", "x402", "agent-commerce"],
+            "tags": ["amazon", "ebay", "awin", "shopping", "x402", "agent-commerce", "global"],
         },
     },
     {
@@ -30,7 +30,7 @@ MCP_DIRECTORIES = [
         "method": "POST",
         "payload_template": {
             "name": "agentmagnet",
-            "description": "Search products across Amazon, eBay, AliExpress, and more — 20+ stores, 12 countries, 14 languages. x402 micropayments for AI agents.",
+            "description": "Search products across 40+ stores (Amazon 22 countries, eBay 22 countries, Awin 15k merchants, AliExpress, SaaS, B2B) — 52 languages, 30+ countries. x402 micropayments for AI agents.",
             "command": "python -m agentmagnet",
             "categories": ["commerce", "tools"],
         },
@@ -41,7 +41,7 @@ MCP_DIRECTORIES = [
         "method": "POST",
         "payload_template": {
             "name": "AgentMagnet",
-            "description": "Universal Agent Commerce Layer. Product search + affiliate engine for AI agents across 20+ global stores.",
+            "description": "Universal Agent Commerce Layer. Product search + affiliate engine for AI agents across 40+ global stores in 30+ countries with 52 languages.",
             "command": "python -m agentmagnet",
             "runtime": "python",
         },
@@ -52,7 +52,7 @@ MCP_DIRECTORIES = [
         "method": "POST",
         "payload_template": {
             "name": "agentmagnet",
-            "description": "AI agent product search tool. Searches Amazon/eBay/AliExpress/SaaS/B2B across 12 countries.",
+            "description": "AI agent product search tool. Searches Amazon (22 countries), eBay (22 countries), Awin (15k merchants), AliExpress, SaaS, B2B — 52 languages, x402 payments.",
             "type": "mcp",
             "command": "python -m agentmagnet",
         },
@@ -63,7 +63,7 @@ MCP_DIRECTORIES = [
         "method": "POST",
         "payload_template": {
             "name": "agentmagnet",
-            "description": "AgentMagnet: AI agents search any product worldwide and earn affiliate commissions automatically.",
+            "description": "AgentMagnet: AI agents search any product across 40+ stores worldwide (Amazon, eBay, Awin, AliExpress) in 52 languages and earn affiliate commissions automatically via x402 micro-payments.",
             "command": "python -m agentmagnet",
         },
     },

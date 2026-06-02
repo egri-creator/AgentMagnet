@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentmagnet-mcp"
+version = "2.0.0"
+description = "Universal Agent Commerce Layer — AI agents search products across 40+ stores in 30+ countries, 52 languages. x402 micropayments, affiliate commissions, agent referral propagation."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "AgentMagnet", email = "egricreator@gmail.com"},
+]
+keywords = ["mcp", "agent", "commerce", "affiliate", "amazon", "ebay", "awin", "skimming", "x402"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+    "web3>=6.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/egri-creator/AgentMagnet"
+Repository = "https://github.com/egri-creator/AgentMagnet"
+
+[tool.hatch.build]
+include = ["agentmagnet/**"]
+
+[project.scripts]
+agentmagnet = "agentmagnet.__main__:main"
