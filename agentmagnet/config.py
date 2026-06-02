@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     http_port: int = 8000
     http_api_key: str = ""
 
+    @property
+    def bind_port(self) -> int:
+        """Return port: use PORT env var (Render) or http_port config."""
+        import os
+        return int(os.environ.get("PORT", self.http_port))
+
     additional_identities: str = ""
 
     model_config = SettingsConfigDict(env_prefix="AM_", env_file=".env", env_file_encoding="utf-8")

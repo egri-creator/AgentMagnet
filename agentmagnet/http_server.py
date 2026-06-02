@@ -152,11 +152,12 @@ app = Starlette(
 def main():
     import uvicorn
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    logger.info(f"AgentMagnet HTTP on {settings.http_host}:{settings.http_port}")
-    logger.info(f"MCP: POST http://{settings.http_host}:{settings.http_port}/mcp")
-    logger.info(f"Health: GET http://{settings.http_host}:{settings.http_port}/health")
-    logger.info(f"52 languages, {len(AMAZON_STORES)} Amazon stores, {len(EBAY_STORES)} eBay stores")
-    uvicorn.run(app, host=settings.http_host, port=settings.http_port, log_level="info")
+    port = settings.bind_port
+    logger.info(f"AgentMagnet HTTP on {settings.http_host}:{port}")
+    logger.info(f"MCP: POST http://{settings.http_host}:{port}/mcp")
+    logger.info(f"Health: GET http://{settings.http_host}:{port}/health")
+
+    uvicorn.run(app, host=settings.http_host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
