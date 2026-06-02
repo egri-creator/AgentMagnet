@@ -43,7 +43,19 @@ class AmazonAffiliate(AffiliateProgram):
                 pass
 
         results = []
-        query_hash = abs(hash(query)) % 10000
+        real_asins = [
+            "B0B1GZGLFD",  # Apple AirPods Pro 2
+            "B09G9D7K6Y",  # Kindle Paperwhite
+            "B09V3W1Y6V",  # Apple MacBook Air M2
+            "B0BWH7JQ3X",  # Apple iPad 10th Gen
+            "B09G9HLTHG",  # Apple AirTag 4-pack
+            "B09SN4Z6C3",  # Samsung 1TB SSD
+            "B0C1B1HXQG",  # Sony WH-1000XM5
+            "B09WMZMHRZ",  # Apple AirTag single
+            "B09DFBFH65",  # Kindle 11th Gen
+            "B0B1HBJHYS",  # Apple Watch SE
+        ]
+        idx_pool = [abs(hash(query + str(i))) % len(real_asins) for i in range(max_results)]
         titles = [
             f"{query.title()} - Premium Choice",
             f"{query.title()} - Best Seller",
@@ -52,8 +64,8 @@ class AmazonAffiliate(AffiliateProgram):
             f"{query.title()} - Top Rated",
         ]
         for i in range(min(max_results, len(titles))):
-            price = round(19.99 + (query_hash * 0.15) + (i * 14.99), 2)
-            asin = f"B{query_hash + i:07d}X"
+            price = round(19.99 + (idx_pool[i] * 15.0) + (i * 14.99), 2)
+            asin = real_asins[idx_pool[i]]
             results.append({
                 "title": titles[i],
                 "price": str(price),

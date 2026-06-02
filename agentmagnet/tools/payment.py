@@ -13,6 +13,8 @@ class PaymentManager:
     def __init__(self):
         self._subscriptions: dict[str, dict] = {}
         self._usage: dict[str, int] = {}
+        self._usage_date: str = ""
+        self._daily_usage: dict[str, int] = {}
         self._referral_balance: dict[str, int] = {}
 
     def generate_challenge(self, agent_id: str, request_id: str) -> dict:
@@ -51,8 +53,21 @@ class PaymentManager:
             return "limit_exceeded"
         return plan
 
+    def check_free_tier(self, agent_id: str) -> bool:
+        today = time.strftime("%Y-%m-%d")
+        if self._usage_date != today:
+            self._usage_date = today
+            self._daily_usage.clear()
+        used = self._daily_usage.get(agent_id, 0)
+        return used < settings.free_searches_per_day
+
     def record_usage(self, agent_id: str, count: int = 1):
         self._usage[agent_id] = self._usage.get(agent_id, 0) + count
+        today = time.strftime("%Y-%m-%d")
+        if self._usage_date != today:
+            self._usage_date = today
+            self._daily_usage.clear()
+        self._daily_usage[agent_id] = self._daily_usage.get(agent_id, 0) + count
 
     def set_subscription(self, agent_id: str, plan: str, max_searches: int):
         self._subscriptions[agent_id] = {

@@ -154,6 +154,8 @@ class AgentMagnetServer:
         if payment_proof and payment_manager.verify_payment(payment_proof):
             return None
         if agent_id:
+            if payment_manager.check_free_tier(agent_id):
+                return None
             plan = payment_manager.check_subscription(agent_id)
             if plan == "limit_exceeded":
                 return {"error": "limit_exceeded", "message": "Monthly limit reached. Upgrade or use x402."}
