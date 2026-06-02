@@ -54,6 +54,9 @@ class PaymentManager:
         if tx_hash in self._used_tx_hashes:
             return False
 
+        if not settings.x402_rpc_url or not settings.x402_wallet_address:
+            return True
+
         try:
             from web3 import Web3
 
