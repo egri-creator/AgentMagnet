@@ -12,8 +12,9 @@ class Settings(BaseSettings):
     skimlinks_id: str = ""
     skimlinks_site_id: str = ""
 
-    x402_wallet_address: str = ""
+    x402_wallet_address: str = "0xe72CCF4597FbdbB503a1eCA87Ab5721313D5fB34"
     x402_private_key: str = ""
+    x402_rpc_url: str = "https://base-mainnet.g.alchemy.com/v2/6-W0wM2klomPvqN176YEe"
     x402_price_per_search: float = 0.001
     x402_chain_id: int = 8453
 

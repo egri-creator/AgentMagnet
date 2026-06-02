@@ -140,12 +140,6 @@ async def test_server():
                     "max_results": 3,
                     "language": "es",
                     "agent_id": "test-agent-001",
-                    "payment_proof": {
-                        "transaction_hash": "0xmock",
-                        "amount": "0.001",
-                        "sender": "0xtest",
-                        "chain_id": 8453,
-                    },
                 },
             },
         })
@@ -201,12 +195,6 @@ async def test_server():
                     "max_results": 2,
                     "language": "de",
                     "agent_id": "test-agent-002",
-                    "payment_proof": {
-                        "transaction_hash": "0xmock2",
-                        "amount": "0.001",
-                        "sender": "0xtest2",
-                        "chain_id": 8453,
-                    },
                 },
             },
         })
