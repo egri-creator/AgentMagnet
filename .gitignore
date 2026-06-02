@@ -6,3 +6,5 @@ dist/
 build/
 *.key
 *.pem
+
+PyPI-Recovery-Codes-*.txt
