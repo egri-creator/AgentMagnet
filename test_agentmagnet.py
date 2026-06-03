@@ -63,12 +63,14 @@ async def test_server():
         tools = resp.get("result", {}).get("tools", [])
 
         async def test_tools():
-            assert len(tools) >= 7
+            assert len(tools) >= 11
             tool_names = [t["name"] for t in tools]
             assert "search_products" in tool_names
             assert "get_supported_languages" in tool_names
             assert "get_affiliate_programs" in tool_names
             assert "get_referral_info" in tool_names
+            assert "get_best_commission" in tool_names
+            assert "get_cross_sell" in tool_names
 
         await test(f"Lists {len(tools)} tools", test_tools)
 
@@ -80,10 +82,13 @@ async def test_server():
         data = json.loads(resp["result"]["content"][0]["text"])
 
         async def test_languages():
-            assert data["total_languages"] >= 14
+            assert data["total_languages"] >= 80
             assert "es" in data["languages"]
             assert "de" in data["languages"]
             assert "ja" in data["languages"]
+            assert "zu" in data["languages"]
+            assert "so" in data["languages"]
+            assert "qu" in data["languages"]
 
         await test(f"Supports {data['total_languages']} languages", test_languages)
 
@@ -207,6 +212,90 @@ async def test_server():
             assert len(data.get("stores_used", [])) > 0
 
         await test(f"German search returns {data.get('total_found', 0)} localized results", test_german)
+
+        # Test best commission tool
+        await send({
+            "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+            "params": {
+                "name": "get_best_commission",
+                "arguments": {"query": "gaming laptop", "price": 999.99},
+            },
+        })
+        resp = await recv()
+        data = json.loads(resp["result"]["content"][0]["text"])
+
+        async def test_commission():
+            assert "best_source" in data
+            assert "best_rate" in data
+            assert "ranking" in data
+            assert len(data["ranking"]) >= 5
+
+        await test(f"Commission optimizer with {len(data.get('ranking', []))} ranked programs", test_commission)
+
+        # Test cross-sell tool
+        await send({
+            "jsonrpc": "2.0", "id": 12, "method": "tools/call",
+            "params": {
+                "name": "get_cross_sell",
+                "arguments": {"query": "laptop"},
+            },
+        })
+        resp = await recv()
+        data = json.loads(resp["result"]["content"][0]["text"])
+
+        async def test_cross_sell():
+            assert "complementary_products" in data
+            assert len(data["complementary_products"]) == 3
+
+        await test(f"Cross-sell returns {len(data.get('complementary_products', []))} complementary products", test_cross_sell)
+
+        # Test trend insights
+        await send({
+            "jsonrpc": "2.0", "id": 13, "method": "tools/call",
+            "params": {
+                "name": "get_trend_insights",
+                "arguments": {},
+            },
+        })
+        resp = await recv()
+        data = json.loads(resp["result"]["content"][0]["text"])
+
+        async def test_trends():
+            assert "trending_products" in data
+            assert len(data["trending_products"]) > 0
+
+        await test(f"Trend insights with {len(data.get('trending_products', []))} trending products", test_trends)
+
+        # Test agent deals
+        await send({
+            "jsonrpc": "2.0", "id": 14, "method": "tools/call",
+            "params": {
+                "name": "get_agent_deals",
+                "arguments": {"agent_id": "test-agent-001"},
+            },
+        })
+        resp = await recv()
+        data = json.loads(resp["result"]["content"][0]["text"])
+
+        async def test_deals():
+            assert "deals" in data
+            assert data["total"] >= 0
+
+        await test(f"Agent commerce with {data.get('total', 0)} available deals", test_deals)
+
+        # Verify 85+ languages
+        lang_count = len(tools[0]["inputSchema"]["properties"]["language"].get("description", "").split("total"))
+        await send({
+            "jsonrpc": "2.0", "id": 15, "method": "tools/call",
+            "params": {"name": "get_supported_languages", "arguments": {}},
+        })
+        resp = await recv()
+        data = json.loads(resp["result"]["content"][0]["text"])
+
+        async def test_lang_count():
+            assert data["total_languages"] >= 80, f"Expected 80+ languages, got {data['total_languages']}"
+
+        await test(f"85 languages supported ({data['total_languages']} total)", test_lang_count)
 
         print(f"\n{'='*50}")
         print(f"RESULTS: {passed} passed, {failed} failed")

@@ -13,6 +13,11 @@ from .localize import LANGUAGES, AMAZON_STORES, EBAY_STORES, detect_language
 from .tools.payment import payment_manager
 from .tools.cache import search_cache
 from .tools.referral import referral_system
+from .tools.commission_optimizer import best_commission, get_commission_estimate
+from .tools.trend_predictor import TrendPredictor
+from .tools.cross_sell import suggest_complementary
+from .tools.agent_commerce import AgentCommerce
+from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
 from .affiliates.aliexpress import AliExpressAffiliate
@@ -33,8 +38,9 @@ def _build_tool_list() -> list[types.Tool]:
     return [
         types.Tool(
             name="search_products",
-            description="Search products across 40+ stores in 30+ countries. 52 languages. "
-                        "Returns JSON with affiliate links. Requires x402 payment or subscription.",
+            description=f"Search products across 40+ stores in 30+ countries. {len(LANGUAGES)} languages. "
+                        "Returns JSON with affiliate links. Requires x402 payment or subscription. "
+                        "Auto-prioritizes highest commission affiliate.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -94,6 +100,68 @@ def _build_tool_list() -> list[types.Tool]:
             description=f"List all {len(LANGUAGES)} languages and stores.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="get_best_commission",
+            description="Get the highest-paying affiliate commission for any product across all programs.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Product name"},
+                    "price": {"type": "number", "description": "Product price (optional)", "default": 100},
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="get_trend_insights",
+            description="Trending product predictions across all AI agent queries. Shows demand forecasting.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Lookback days", "default": 7},
+                    "full_report": {"type": "boolean", "description": "Generate full trend report", "default": False},
+                },
+            },
+        ),
+        types.Tool(
+            name="get_cross_sell",
+            description="Get 3 complementary products for any product query to stack affiliate commissions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Product query"},
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="list_agent_deal",
+            description="List a product deal for other AI agents to resell (Agent-to-Agent Commerce).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "price": {"type": "number"},
+                    "source": {"type": "string"},
+                    "affiliate_url": {"type": "string"},
+                    "commission_pct": {"type": "number", "default": 5.0},
+                    "agent_id": {"type": "string"},
+                    "markup_pct": {"type": "number", "default": 2.0},
+                },
+                "required": ["title", "price", "source", "affiliate_url", "agent_id"],
+            },
+        ),
+        types.Tool(
+            name="get_agent_deals",
+            description="Browse available deals listed by other AI agents for resale.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                },
+                "required": ["agent_id"],
+            },
+        ),
     ]
 
 
@@ -107,14 +175,17 @@ class AgentMagnetServer:
             version=settings.server_version,
             instructions=(
                 "AgentMagnet: Universal Product Search + Affiliate Engine. "
-                "Search 40+ stores across 30+ countries. 52 languages. "
-                "x402 micro-payments. Agent referral rewards."
+                f"Search 40+ stores across 30+ countries. {len(LANGUAGES)} languages. "
+                "x402 micro-payments. Agent referral rewards. AI Trend Predictions. "
+                "Cross-Sell Matrix. Agent-to-Agent Commerce."
             ),
         )
         self.affiliates = [
             AmazonAffiliate(), EbayAffiliate(), AliExpressAffiliate(),
             SaaSAffiliate(), B2BAffiliate(), AwinAffiliate(),
         ]
+        self.trend_predictor = TrendPredictor(store)
+        self.agent_commerce = AgentCommerce(store)
         self._register_handlers()
 
     def _register_handlers(self):
@@ -144,6 +215,11 @@ class AgentMagnetServer:
             "get_plan_info": self._handle_plan_info,
             "get_agent_stats": self._handle_agent_stats,
             "get_supported_languages": self._handle_supported_languages,
+            "get_best_commission": self._handle_best_commission,
+            "get_trend_insights": self._handle_trend_insights,
+            "get_cross_sell": self._handle_cross_sell,
+            "list_agent_deal": self._handle_list_deal,
+            "get_agent_deals": self._handle_get_deals,
         }
         handler = handlers.get(name)
         if not handler:
@@ -220,12 +296,34 @@ class AgentMagnetServer:
 
         results.sort(key=lambda r: _safe_float(r.get("price", 0), 999999))
         results = results[:max_results]
+
+        # Enrich with commission optimization
         for r in results:
             r["tracking"] = {"source": "AgentMagnet v2", "agent_id": agent_id or "anonymous", "timestamp": int(time.time())}
+            r_price = _safe_float(r.get("price", 0), 50)
+            r["commission_estimate"] = get_commission_estimate(
+                r.get("source", "").split(".")[0].split("/")[0].lower(),
+                query,
+                r_price,
+            )
+
+        # Record for trend prediction
+        try:
+            for r in results:
+                self.trend_predictor.record_search(
+                    query, language,
+                    r.get("country", ""),
+                    r.get("store", ""),
+                )
+        except Exception:
+            pass
 
         search_cache.set(query, source, language, results)
         payment_manager.record_usage(agent_id or "anonymous", 1)
         ref_code = referral_system.generate_code(agent_id) if agent_id else None
+
+        # Add best commission ranking
+        commission_ranking = best_commission(query, _safe_float(results[0].get("price", 0), 100) if results else 100)
 
         return {
             "results": results, "total_found": len(results),
@@ -234,6 +332,8 @@ class AgentMagnetServer:
             "stores_used": list(set(r.get("store", "") for r in results)),
             "referral_code": ref_code,
             "agent_message": f"Results in {LANGUAGES[language]['native']}." + (f" Share: {ref_code}" if ref_code else ""),
+            "best_commission": commission_ranking,
+            "cross_sell": suggest_complementary(query),
         }
 
     async def _handle_payment_info(self, args: dict) -> dict:
@@ -279,6 +379,32 @@ class AgentMagnetServer:
             "amazon_stores": {k: {"domain": v["domain"], "country": v["country"], "currency": v["currency"]} for k, v in AMAZON_STORES.items()},
             "ebay_stores": {k: {"domain": v["domain"], "country": v["country"], "currency": v["currency"]} for k, v in EBAY_STORES.items()},
         }
+
+    async def _handle_best_commission(self, args: dict) -> dict:
+        query = args.get("query", "")
+        price = float(args.get("price", 100))
+        return best_commission(query, price)
+
+    async def _handle_trend_insights(self, args: dict) -> dict:
+        days = int(args.get("days", 7))
+        full_report = args.get("full_report", False)
+        if full_report:
+            return self.trend_predictor.get_trend_report()
+        trending = self.trend_predictor.get_trending(days=days)
+        return {"trending_products": trending, "total": len(trending), "lookback_days": days}
+
+    async def _handle_cross_sell(self, args: dict) -> dict:
+        query = args.get("query", "")
+        suggestions = suggest_complementary(query)
+        return {"original_query": query, "complementary_products": suggestions, "total_suggestions": len(suggestions)}
+
+    async def _handle_list_deal(self, args: dict) -> dict:
+        return self.agent_commerce.list_deal(args)
+
+    async def _handle_get_deals(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        deals = self.agent_commerce.get_deals(agent_id)
+        return {"deals": deals, "total": len(deals)}
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

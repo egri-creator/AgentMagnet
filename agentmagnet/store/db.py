@@ -47,6 +47,8 @@ class Store:
             "CREATE TABLE IF NOT EXISTS referral_network (agent_id TEXT, referrer_id TEXT, referred_at REAL, PRIMARY KEY (agent_id, referrer_id))",
             "CREATE TABLE IF NOT EXISTS used_tx_hashes (tx_hash TEXT PRIMARY KEY, used_at REAL)",
             "CREATE TABLE IF NOT EXISTS total_usage (agent_id TEXT PRIMARY KEY, count INTEGER DEFAULT 0)",
+            "CREATE TABLE IF NOT EXISTS trend_queries (day_key TEXT, query TEXT, language TEXT, country TEXT, source TEXT, count INTEGER DEFAULT 1, PRIMARY KEY (day_key, query, language, country, source))",
+            "CREATE TABLE IF NOT EXISTS agent_deals (deal_id TEXT PRIMARY KEY, title TEXT, price REAL, source TEXT, affiliate_url TEXT, commission_pct REAL, agent_id TEXT, markup_pct REAL, created_at TEXT)",
         ]
         conn = self.conn
         for s in schema:
@@ -187,6 +189,17 @@ class Store:
         self.conn.commit()
 
     # --- Stats ---
+    # --- Generic query helpers for tools ---
+    def execute(self, sql: str, params: tuple = ()):
+        self.conn.execute(sql, params)
+        self.conn.commit()
+
+    def fetchone(self, sql: str, params: tuple = ()):
+        return self.conn.execute(sql, params).fetchone()
+
+    def fetchall(self, sql: str, params: tuple = ()):
+        return self.conn.execute(sql, params).fetchall()
+
     def get_agent_stats(self, agent_id: str) -> dict:
         return {
             "agent_id": agent_id,
