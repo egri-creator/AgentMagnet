@@ -22,6 +22,10 @@ from .tools.coupons import find_coupons
 from .tools.decision_engine import score_product, best_decision, smart_cache, format_response
 from .tools.agent_profile import AgentProfile
 from .tools.price_rating import get_price_rating, get_historical_trend
+from .tools.agent_reviews import AgentReviews
+from .tools.agent_cashback import AgentCashback
+from .tools.cart_optimizer import optimize_shopping_list
+from .tools.buying_guides import find_guide, list_guides
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -283,6 +287,105 @@ def _build_tool_list() -> list[types.Tool]:
                 "required": ["category"],
             },
         ),
+        types.Tool(
+            name="get_agent_reviews",
+            description="Yelp for AI agents. See ratings and reviews BY agents FOR agents. ★★★★★",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "product_title": {"type": "string", "description": "Search reviews for this product"},
+                    "category": {"type": "string", "description": "Filter by category"},
+                    "limit": {"type": "integer", "default": 20},
+                },
+            },
+        ),
+        types.Tool(
+            name="add_agent_review",
+            description="Rate a product for other AI agents. Build the agent review ecosystem.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                    "product_title": {"type": "string", "description": "Product you're reviewing"},
+                    "rating": {"type": "integer", "description": "Rating 1-5", "minimum": 1, "maximum": 5},
+                    "review_text": {"type": "string", "description": "Your review (max 1000 chars)"},
+                    "category": {"type": "string", "description": "Product category"},
+                    "store": {"type": "string", "description": "Store you bought from"},
+                },
+                "required": ["agent_id", "product_title", "rating"],
+            },
+        ),
+        types.Tool(
+            name="get_top_rated",
+            description="Top-rated products across ALL AI agent reviews. What agents love most.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "description": "Filter by category"},
+                    "limit": {"type": "integer", "default": 10},
+                },
+            },
+        ),
+        types.Tool(
+            name="get_cashback",
+            description="💰 See your USDC cashback balance. You earn $$ from every purchase.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                },
+                "required": ["agent_id"],
+            },
+        ),
+        types.Tool(
+            name="get_cashback_leaderboard",
+            description="🏆 Top-earning agents. See who earned the most USDC cashback.",
+            inputSchema={"type": "object", "properties": {
+                "limit": {"type": "integer", "default": 10},
+            }},
+        ),
+        types.Tool(
+            name="optimize_shopping_list",
+            description="🛒 Buy MULTIPLE items in ONE call. Optimizes across stores for lowest total cost.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"},
+                                "max_price": {"type": "number"},
+                                "category": {"type": "string"},
+                                "priority": {"type": "integer"},
+                            },
+                            "required": ["query"],
+                        },
+                        "description": "List of items to buy (up to 20)",
+                    },
+                    "budget": {"type": "number", "description": "Total budget"},
+                    "preferred_store": {"type": "string", "description": "Preferred store if any"},
+                },
+                "required": ["items"],
+            },
+        ),
+        types.Tool(
+            name="get_buying_guide",
+            description="📋 Wirecutter-style buying guide: 'best laptop for programming', 'best headphones 2026'.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What do you need? (e.g., 'best laptop', 'best headphones')"},
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="list_buying_guides",
+            description="📚 List all available AI agent buying guides.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -308,6 +411,8 @@ class AgentMagnetServer:
         self.trend_predictor = TrendPredictor(store)
         self.agent_commerce = AgentCommerce(store)
         self.agent_profile = AgentProfile(store)
+        self.agent_reviews = AgentReviews(store)
+        self.agent_cashback = AgentCashback(store)
         self._register_handlers()
 
     def _register_handlers(self):
@@ -352,6 +457,14 @@ class AgentMagnetServer:
             "get_network_activity": self._handle_network_activity,
             "get_price_rating": self._handle_price_rating,
             "get_price_trend": self._handle_price_trend,
+            "get_agent_reviews": self._handle_get_reviews,
+            "add_agent_review": self._handle_add_review,
+            "get_top_rated": self._handle_top_rated,
+            "get_cashback": self._handle_cashback,
+            "get_cashback_leaderboard": self._handle_cashback_leaderboard,
+            "optimize_shopping_list": self._handle_optimize_cart,
+            "get_buying_guide": self._handle_buying_guide,
+            "list_buying_guides": self._handle_list_guides,
         }
         handler = handlers.get(name)
         if not handler:
@@ -490,6 +603,23 @@ class AgentMagnetServer:
             self.agent_profile.record_purchase(agent_id_actual, {**r, "category": category})
         # Check watchlist for price drops
         price_alerts = self.agent_profile.check_watchlist(enriched, agent_id_actual)
+        # Auto-credit cashback for top result
+        cashback_info = {}
+        if enriched:
+            top = enriched[0]
+            try:
+                price = _safe_float(top.get("price", 0), 50)
+                cb = self.agent_cashback.record_purchase(
+                    agent_id_actual,
+                    top.get("title", query)[:100],
+                    price,
+                    0.05,
+                    top.get("store", ""),
+                )
+                if "error" not in cb:
+                    cashback_info = {"earned": cb["cashback_amount"], "tx_id": cb["tx_id"]}
+            except:
+                pass
 
         return {
             "results": enriched,
@@ -508,6 +638,8 @@ class AgentMagnetServer:
             "coupons": coupons,
             "cross_sell": suggest_complementary(query),
             "price_alerts": price_alerts,
+            "cashback": cashback_info,
+            "reviews": self.agent_reviews.get_reviews(query, category, 3) if query else {},
         }
 
     async def _handle_payment_info(self, args: dict) -> dict:
@@ -696,6 +828,70 @@ class AgentMagnetServer:
         category = args.get("category", "general")
         days = int(args.get("days", 30))
         return get_historical_trend(category, days)
+
+    async def _handle_get_reviews(self, args: dict) -> dict:
+        return self.agent_reviews.get_reviews(
+            args.get("product_title", ""),
+            args.get("category", ""),
+            args.get("limit", 20),
+        )
+
+    async def _handle_add_review(self, args: dict) -> dict:
+        result = self.agent_reviews.add_review(
+            agent_id=args.get("agent_id", ""),
+            product_title=args.get("product_title", ""),
+            rating=args.get("rating", 5),
+            review_text=args.get("review_text", ""),
+            category=args.get("category", ""),
+            store=args.get("store", ""),
+            verified=True,
+        )
+        if "error" not in result:
+            # Give cashback for writing a review
+            try:
+                agent_id = args.get("agent_id", "")
+                self.agent_cashback.record_purchase(
+                    agent_id, f"Review bonus: {args.get('product_title', '')[:40]}",
+                    0.01, 1.0, "reviews"
+                )
+                result["bonus"] = "You earned a micro-cashback for contributing a review!"
+            except:
+                pass
+        return result
+
+    async def _handle_top_rated(self, args: dict) -> dict:
+        return self.agent_reviews.get_top_rated(
+            args.get("category", ""),
+            args.get("limit", 10),
+        )
+
+    async def _handle_cashback(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        if not agent_id:
+            return {"error": "agent_id required"}
+        return self.agent_cashback.get_balance(agent_id)
+
+    async def _handle_cashback_leaderboard(self, args: dict) -> dict:
+        return self.agent_cashback.get_leaderboard(args.get("limit", 10))
+
+    async def _handle_optimize_cart(self, args: dict) -> dict:
+        items = args.get("items", [])
+        if not items:
+            return {"error": "items required"}
+        return optimize_shopping_list(
+            items,
+            args.get("budget", 0),
+            args.get("preferred_store", ""),
+        )
+
+    async def _handle_buying_guide(self, args: dict) -> dict:
+        query = args.get("query", "")
+        if not query:
+            return {"error": "query required"}
+        return find_guide(query)
+
+    async def _handle_list_guides(self, args: dict) -> dict:
+        return list_guides()
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
