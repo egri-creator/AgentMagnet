@@ -448,7 +448,9 @@ def _build_tool_list() -> list[types.Tool]:
             name="search_federated",
             description="🔍 Search Best Buy, Walmart, Target, Costco, Home Depot, Newegg and 40+ stores in REAL TIME. "
                         "Every link is an affiliate link via Skimlinks — we earn commission on every click. "
-                        "⚠️ Set country! A Colombian ('country=co') sees Latin America stores, not Spain.",
+                        "🌍 Auto-detects country from your IP if not specified. "
+                        "Or manually set country=co, es, mx, us, uk, de... "
+                        "A Colombian (country=co) sees Latin America stores, not Spain.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -458,9 +460,9 @@ def _build_tool_list() -> list[types.Tool]:
                         "type": "array", "items": {"type": "string"},
                         "description": "Specific stores to search (e.g., ['bestbuy', 'walmart', 'costco'])",
                     },
-                    "country": {"type": "string", "description": "Your country code (es, mx, co, us, de). Affects which stores you see."},
+                    "country": {"type": "string", "description": "Optional. Your country code (es, mx, co, us, de). Auto-detected from IP if not set."},
                     "scope": {"type": "string", "enum": ["country", "region", "all"],
-                              "description": "country=only stores shipping to you. region=your region (EU sees EU). all=global."},
+                              "description": "country=only stores shipping to you. region=your region (EU sees EU). all=global. Default: country"},
                 },
                 "required": ["query"],
             },
@@ -516,7 +518,9 @@ class AgentMagnetServer:
     async def get_tools(self) -> list[dict]:
         return [t.model_dump() for t in TOOLS]
 
-    async def call_tool_api(self, name: str, arguments: dict) -> dict:
+    async def call_tool_api(self, name: str, arguments: dict, ip: str = None) -> dict:
+        if ip:
+            arguments["_client_ip"] = ip
         return await self._dispatch(name, arguments)
 
     async def _dispatch(self, name: str, args: dict) -> dict:
@@ -1050,12 +1054,37 @@ class AgentMagnetServer:
         )
 
     async def _handle_search_federated(self, args: dict) -> dict:
+        country = args.get("country", "")
+        client_ip = args.get("_client_ip")
+        agent_id = args.get("agent_id")
+        scope = args.get("scope", "country")
+
+        # Auto-detect country from IP if not explicitly provided
+        if not country and client_ip:
+            from .tools.geoip import detect_country_from_ip
+            detected = detect_country_from_ip(client_ip)
+            if detected:
+                country = detected
+
+        # If still no country, try agent profile
+        if not country and agent_id:
+            pref = self.agent_profile.get_profile(agent_id)
+            if pref and "preferences" in pref:
+                country = pref["preferences"].get("country", "")
+
+        # Auto-save detected country to agent profile for future queries
+        if country and agent_id:
+            try:
+                self.agent_profile.set_preference(agent_id, "country", country)
+            except Exception:
+                pass
+
         return search_federated(
             args.get("query", ""),
             args.get("max_results", 10),
             args.get("stores", None),
-            args.get("scope", "country"),
-            args.get("country", ""),
+            scope,
+            country,
             args.get("language", "en"),
         )
 

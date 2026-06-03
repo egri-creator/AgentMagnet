@@ -26,6 +26,20 @@ from .localize import AMAZON_STORES, EBAY_STORES, LANGUAGES
 logger = logging.getLogger("agentmagnet.http")
 
 
+def _get_client_ip(request) -> str | None:
+    """Extract real client IP from request headers."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    cf = request.headers.get("cf-connecting-ip")
+    if cf:
+        return cf.strip()
+    return request.client.host if request.client else None
+
+
 class AgentMagnetHTTPHandler:
     def __init__(self):
         self.server = AgentMagnetServer()
@@ -90,7 +104,9 @@ class AgentMagnetHTTPHandler:
                 params = body.get("params", {})
                 name = params.get("name", "")
                 arguments = params.get("arguments", {})
-                result = await self.server.call_tool_api(name, arguments)
+                # Auto-detect country from client IP if not provided
+                client_ip = _get_client_ip(request)
+                result = await self.server.call_tool_api(name, arguments, client_ip)
                 return JSONResponse({
                     "jsonrpc": "2.0", "id": msg_id,
                     "result": {"content": [{"type": "text", "text": json.dumps(result, indent=2)}], "isError": False},
