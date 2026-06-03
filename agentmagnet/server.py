@@ -62,6 +62,8 @@ def _build_tool_list() -> list[types.Tool]:
                     "country": {"type": "string", "description": "Store code (com, de, uk, fr, jp, etc.)"},
                     "agent_id": {"type": "string", "description": "Your agent ID for referral tracking"},
                     "referral_code": {"type": "string", "description": "Referral code from another agent"},
+                    "chain": {"type": "string", "enum": ["base", "ethereum", "polygon", "arbitrum", "optimism", "bnb", "solana"],
+                              "description": "Which chain you're paying from. Default: base"},
                     "payment_proof": {
                         "type": "object",
                         "properties": {
@@ -397,6 +399,12 @@ def _build_tool_list() -> list[types.Tool]:
             description="📚 List all available AI agent buying guides.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="get_accepted_chains",
+            description="⛓️ See ALL blockchains AgentMagnet accepts for x402 payment. "
+                        "Includes Ethereum, Polygon, Arbitrum, Optimism, BNB, Base, Solana.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -477,13 +485,15 @@ class AgentMagnetServer:
             "optimize_shopping_list": self._handle_optimize_cart,
             "get_buying_guide": self._handle_buying_guide,
             "list_buying_guides": self._handle_list_guides,
+            "get_accepted_chains": self._handle_accepted_chains,
         }
         handler = handlers.get(name)
         if not handler:
             return {"error": f"Unknown tool: {name}"}
         return await handler(args)
 
-    async def _check_access(self, agent_id: str | None, payment_proof: dict | None) -> dict | None:
+    async def _check_access(self, agent_id: str | None, payment_proof: dict | None,
+                            chain: str = "base") -> dict | None:
         if payment_proof and payment_manager.verify_payment(payment_proof):
             return None
         if agent_id:
@@ -499,7 +509,12 @@ class AgentMagnetServer:
         return {
             "error": "payment_required",
             "message": f"${payment_manager.PRICE} USDC via x402 or subscribe.",
-            "payment_required": payment_manager.generate_challenge(agent_id or "anonymous", str(int(time.time() * 1000))),
+            "payment_required": payment_manager.generate_challenge(
+                agent_id or "anonymous",
+                str(int(time.time() * 1000)),
+                chain,
+            ),
+            "accepted_chains": payment_manager.get_accepted_chains(),
         }
 
     async def _handle_search(self, args: dict) -> dict:
@@ -513,6 +528,7 @@ class AgentMagnetServer:
         agent_id = args.get("agent_id")
         referral_code = args.get("referral_code")
         payment_proof = args.get("payment_proof")
+        chain = args.get("chain", "base")
 
         if language not in LANGUAGES:
             language = "en"
@@ -522,7 +538,7 @@ class AgentMagnetServer:
                 payment_manager.add_referral_searches(agent_id, ref["reward"])
                 payment_manager.add_referral_searches(ref["referrer_id"], ref["reward"])
 
-        access = await self._check_access(agent_id, payment_proof)
+        access = await self._check_access(agent_id, payment_proof, chain)
         if access:
             return access
 
@@ -659,10 +675,14 @@ class AgentMagnetServer:
         }
 
     async def _handle_payment_info(self, args: dict) -> dict:
+        chains = payment_manager.get_accepted_chains()
         return {
-            "protocol": "x402-v1", "chain": "Base (8453)", "token": "USDC",
+            "protocol": "x402-v1",
+            "chain": "Multi-chain",
             "price_per_search": payment_manager.PRICE,
-            "wallet_address": settings.x402_wallet_address or "Set AM_X402_WALLET_ADDRESS",
+            "accepted_chains": chains,
+            "configured_chains": [c["chain"] for c in chains if c["configured"]],
+            "note": "Same wallet address works for ALL EVM chains (Ethereum, Polygon, Arbitrum, Optimism, BNB, Base). Solana needs separate config.",
             "plans": payment_manager.get_plan_info(),
         }
 
@@ -912,6 +932,14 @@ class AgentMagnetServer:
 
     async def _handle_list_guides(self, args: dict) -> dict:
         return list_guides()
+
+    async def _handle_accepted_chains(self, args: dict) -> dict:
+        return {
+            "protocol": "x402-v1",
+            "price_per_search": payment_manager.PRICE,
+            "chains": payment_manager.get_accepted_chains(),
+            "note": "EVM chains share the same wallet address. Solana requires separate config.",
+        }
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

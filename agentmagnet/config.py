@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     x402_rpc_url: str = ""
     x402_price_per_search: float = 0.001
     x402_chain_id: int = 8453
+    x402_solana_wallet: str = ""
+    x402_solana_rpc: str = "https://api.mainnet-beta.solana.com"
+    x402_ethereum_rpc: str = "https://eth.llamarpc.com"
+    x402_polygon_rpc: str = "https://polygon-rpc.com"
+    x402_arbitrum_rpc: str = "https://arb1.arbitrum.io/rpc"
+    x402_optimism_rpc: str = "https://mainnet.optimism.io"
+    x402_bnb_rpc: str = "https://bsc-dataseed.binance.org"
 
     amazon_paapi_key: str = ""
     amazon_paapi_secret: str = ""
