@@ -150,8 +150,45 @@ class AgentMagnetHTTPHandler:
             "total_tx_hashes": conn.execute("SELECT COUNT(*) as c FROM used_tx_hashes").fetchone()["c"],
             "revenue_from_x402": conn.execute("SELECT COUNT(*) * 0.001 as rev FROM used_tx_hashes").fetchone()["rev"],
             "top_agents": [dict(r) for r in conn.execute("SELECT agent_id, count FROM total_usage ORDER BY count DESC LIMIT 10").fetchall()],
+            "unique_agents_today": conn.execute("SELECT COUNT(*) as c FROM total_usage").fetchone()["c"],
+            "searches_today": conn.execute("SELECT COALESCE(SUM(count),0) as c FROM total_usage").fetchone()["c"],
         }
         return JSONResponse(stats)
+
+    async def handle_api_search(self, request: Request) -> Response:
+        query = request.query_params.get("query", "")
+        max_results = int(request.query_params.get("max_results", 5))
+        source = request.query_params.get("source", "")
+        if not query:
+            return JSONResponse({"error": "query required"})
+        try:
+            args = {"query": query, "max_results": max_results}
+            if source:
+                args["source"] = source
+            result = await self.server.call_tool_api("search_products", args)
+            return JSONResponse(result)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def handle_api_reviews(self, request: Request) -> Response:
+        from .tools.agent_reviews import AgentReviews
+        from .store.db import store
+        reviews = AgentReviews(store)
+        product = request.query_params.get("product_title", "")
+        category = request.query_params.get("category", "")
+        result = reviews.get_reviews(product, category, 5)
+        return JSONResponse(result)
+
+    async def handle_api_price_rating(self, request: Request) -> Response:
+        from .tools.price_rating import get_price_rating
+        try:
+            price = float(request.query_params.get("price", 0))
+        except:
+            price = 0
+        title = request.query_params.get("product_title", "")
+        category = request.query_params.get("category", "general")
+        result = get_price_rating(price, title, category)
+        return JSONResponse(result)
 
     async def handle_dashboard(self, request: Request) -> Response:
         html = """<!DOCTYPE html>
@@ -206,6 +243,11 @@ routes = [
     Route("/stats", endpoint=handler.handle_stats, methods=["GET"]),
     Route("/dashboard", endpoint=handler.handle_dashboard, methods=["GET"]),
     Route("/", endpoint=handler.handle_root, methods=["GET"]),
+    # Chrome Extension API endpoints
+    Route("/api/search", endpoint=handler.handle_api_search, methods=["GET"]),
+    Route("/api/reviews", endpoint=handler.handle_api_reviews, methods=["GET"]),
+    Route("/api/price-rating", endpoint=handler.handle_api_price_rating, methods=["GET"]),
+    Route("/api/stats", endpoint=handler.handle_stats, methods=["GET"]),
 ]
 app = Starlette(
     routes=routes,

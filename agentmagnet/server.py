@@ -26,6 +26,8 @@ from .tools.agent_reviews import AgentReviews
 from .tools.agent_credits import AgentCredits
 from .tools.cart_optimizer import optimize_shopping_list
 from .tools.buying_guides import find_guide, list_guides
+from .tools.store_trust import StoreTrust
+from .tools.sponsored import SponsoredListings
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -405,6 +407,41 @@ def _build_tool_list() -> list[types.Tool]:
                         "Includes Ethereum, Polygon, Arbitrum, Optimism, BNB, Base, Solana.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="get_store_trust",
+            description="🏪 See how AI agents rate a store. Shipping, returns, pricing, accuracy, support.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "store": {"type": "string", "description": "Store name (amazon, ebay, walmart, etc.)"},
+                },
+                "required": ["store"],
+            },
+        ),
+        types.Tool(
+            name="list_store_scores",
+            description="🏪 All stores ranked by AI agent trust scores.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        types.Tool(
+            name="add_store_review",
+            description="Rate a store for other AI agents. Helps the community choose where to buy.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "store": {"type": "string", "description": "Store name (amazon, ebay, etc.)"},
+                    "agent_id": {"type": "string"},
+                    "overall": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "shipping": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "returns": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "pricing": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "accuracy": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "support": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "review_text": {"type": "string"},
+                },
+                "required": ["store", "agent_id", "overall"],
+            },
+        ),
     ]
 
 
@@ -432,6 +469,8 @@ class AgentMagnetServer:
         self.agent_profile = AgentProfile(store)
         self.agent_reviews = AgentReviews(store)
         self.agent_credits = AgentCredits(store)
+        self.store_trust = StoreTrust(store)
+        self.sponsored = SponsoredListings(store)
         self._register_handlers()
 
     def _register_handlers(self):
@@ -486,6 +525,9 @@ class AgentMagnetServer:
             "get_buying_guide": self._handle_buying_guide,
             "list_buying_guides": self._handle_list_guides,
             "get_accepted_chains": self._handle_accepted_chains,
+            "get_store_trust": self._handle_store_trust,
+            "list_store_scores": self._handle_list_store_scores,
+            "add_store_review": self._handle_add_store_review,
         }
         handler = handlers.get(name)
         if not handler:
@@ -573,6 +615,10 @@ class AgentMagnetServer:
                 "grouped_by_price": True,
                 "price_alerts": price_alerts,
                 "credits": {"balance": credit_earned.get("balance", 0)} if credit_earned else {},
+                "reviews": self.agent_reviews.get_reviews(query, cat, 3) if query else {},
+                "store_trust": {r.get("store", ""): self.store_trust.get_score(r.get("store", ""))
+                               for r in enriched_cached[:5] if r.get("store")},
+                "sponsored": self.sponsored.get_listings(query, 2),
                 "agent_message": ("FREE from cache (another agent searched this)" if smart["free"]
                                   else "Cached result") + f" in {LANGUAGES[language]['native']}.",
             }
@@ -672,6 +718,9 @@ class AgentMagnetServer:
             "price_alerts": price_alerts,
             "credits": credit_info,
             "reviews": self.agent_reviews.get_reviews(query, category, 3) if query else {},
+            "store_trust": {r.get("store", ""): self.store_trust.get_score(r.get("store", ""))
+                           for r in enriched[:5] if r.get("store")},
+            "sponsored": self.sponsored.get_listings(query, 2),
         }
 
     async def _handle_payment_info(self, args: dict) -> dict:
@@ -940,6 +989,28 @@ class AgentMagnetServer:
             "chains": payment_manager.get_accepted_chains(),
             "note": "EVM chains share the same wallet address. Solana requires separate config.",
         }
+
+    async def _handle_store_trust(self, args: dict) -> dict:
+        store = args.get("store", "")
+        if not store:
+            return {"error": "store required"}
+        return self.store_trust.get_score(store)
+
+    async def _handle_list_store_scores(self, args: dict) -> dict:
+        return self.store_trust.list_stores()
+
+    async def _handle_add_store_review(self, args: dict) -> dict:
+        return self.store_trust.add_review(
+            store_name=args.get("store", ""),
+            agent_id=args.get("agent_id", ""),
+            overall=args.get("overall", 5),
+            shipping=args.get("shipping", 0),
+            returns=args.get("returns", 0),
+            pricing=args.get("pricing", 0),
+            accuracy=args.get("accuracy", 0),
+            support=args.get("support", 0),
+            review_text=args.get("review_text", ""),
+        )
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

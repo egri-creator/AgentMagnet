@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "AgentMagnet — AI Shopping Companion",
+  "version": "1.0.0",
+  "description": "See price comparisons, AI agent reviews, coupons, and deals on Amazon, eBay, and 40+ stores. Powered by AgentMagnet.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["https://www.amazon.com/*", "https://www.amazon.co.uk/*", "https://www.amazon.de/*",
+                       "https://www.amazon.fr/*", "https://www.amazon.es/*", "https://www.amazon.it/*",
+                       "https://www.amazon.co.jp/*", "https://www.amazon.ca/*",
+                       "https://www.ebay.com/*", "https://www.ebay.co.uk/*", "https://www.ebay.de/*",
+                       "https://www.ebay.fr/*", "https://www.ebay.es/*", "https://www.ebay.it/*",
+                       "https://agentmagnet-y07b.onrender.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "AgentMagnet"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.amazon.com/*", "https://www.amazon.co.uk/*", "https://www.amazon.de/*",
+                  "https://www.amazon.fr/*", "https://www.amazon.es/*", "https://www.amazon.it/*",
+                  "https://www.amazon.co.jp/*", "https://www.amazon.ca/*",
+                  "https://www.ebay.com/*", "https://www.ebay.co.uk/*", "https://www.ebay.de/*",
+                  "https://www.ebay.fr/*", "https://www.ebay.es/*", "https://www.ebay.it/*"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "icons": {
+    "16": "icon-16.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  }
+}
