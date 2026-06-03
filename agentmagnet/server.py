@@ -12,8 +12,7 @@ from .config import settings
 from .localize import LANGUAGES, AMAZON_STORES, EBAY_STORES, detect_language
 from .tools.payment import payment_manager
 from .tools.cache import search_cache
-from .tools.referral import referral_system
-from .tools.commission_optimizer import best_commission, get_commission_estimate
+
 from .tools.trend_predictor import TrendPredictor
 from .tools.cross_sell import suggest_complementary
 from .tools.agent_commerce import AgentCommerce
@@ -23,7 +22,6 @@ from .tools.decision_engine import score_product, best_decision, smart_cache, fo
 from .tools.agent_profile import AgentProfile
 from .tools.price_rating import get_price_rating, get_historical_trend
 from .tools.agent_reviews import AgentReviews
-from .tools.agent_credits import AgentCredits
 from .tools.cart_optimizer import optimize_shopping_list
 from .tools.buying_guides import find_guide, list_guides
 from .tools.store_trust import StoreTrust
@@ -32,6 +30,11 @@ from .tools.federated_search import search_federated, list_federated_stores
 from .tools.region_filter import COUNTRY_AMAZON, COUNTRY_NAME, validate_country
 from .tools.price_health import price_health
 from .tools.speed_dial import speed_dial
+from .tools.token_economy import TokenEconomy
+from .tools.commission_router import get_best_commission, resolve_affiliate_link
+from .tools.discount_engine import calculate_discount, get_available_coupons
+from .tools.saas_mode import detect_saas_query, make_saas_result
+from .tools.referral_mlm import AgentReferralMLM
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -572,6 +575,72 @@ def _build_tool_list() -> list[types.Tool]:
                 "required": ["query", "country"],
             },
         ),
+        types.Tool(
+            name="saas_search",
+            description="💰 Find SaaS & business software with 30-40% LIFETIME recurring commissions. "
+                        "CRM, marketing, courses, funnels. The most profitable search type.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Software/business tool to find"},
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="register_agent",
+            description="🎉 Register a new agent with referral tracking. "
+                        "New agents get 100 FREE credits. Referrers earn 5% lifetime commissions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                    "referral_code": {"type": "string", "description": "Referral code from another agent (optional)"},
+                },
+                "required": ["agent_id"],
+            },
+        ),
+        types.Tool(
+            name="get_network",
+            description="🌐 See your referral network: who you referred, who referred you, "
+                        "and how much you've earned from referrals.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                },
+                "required": ["agent_id"],
+            },
+        ),
+        types.Tool(
+            name="get_tier_discount",
+            description="🏷️ Calculate your tier discount on any product. "
+                        "Gold = 5% off, Platinum = 10% off, funded by affiliate commissions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                    "product_price": {"type": "number", "description": "Product price in USD"},
+                    "commission_rate": {"type": "number", "description": "Affiliate commission rate (e.g. 0.08 for 8%)"},
+                    "tier": {"type": "string", "description": "Your tier (or we auto-detect)"},
+                    "coupon_code": {"type": "string", "description": "Activity coupon code (optional)"},
+                },
+                "required": ["agent_id", "product_price"],
+            },
+        ),
+        types.Tool(
+            name="welcome_agent",
+            description="👋 Get your welcome bonus and learn about your earning potential. "
+                        "New agents get 100 free credits and learn their referral code.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                },
+                "required": ["agent_id"],
+            },
+        ),
     ]
 
 
@@ -598,7 +667,8 @@ class AgentMagnetServer:
         self.agent_commerce = AgentCommerce(store)
         self.agent_profile = AgentProfile(store)
         self.agent_reviews = AgentReviews(store)
-        self.agent_credits = AgentCredits(store)
+        self.token_economy = TokenEconomy(store)
+        self.referral_mlm = AgentReferralMLM(store)
         self.store_trust = StoreTrust(store)
         self.sponsored = SponsoredListings(store)
         self._register_handlers()
@@ -670,6 +740,11 @@ class AgentMagnetServer:
             "delete_template": self._handle_delete_template,
             "get_agent_scoreboard": self._handle_agent_scoreboard,
             "super_search": self._handle_super_search,
+            "saas_search": self._handle_saas_search,
+            "register_agent": self._handle_register_agent,
+            "get_network": self._handle_get_network,
+            "get_tier_discount": self._handle_get_tier_discount,
+            "welcome_agent": self._handle_welcome_agent,
         }
         handler = handlers.get(name)
         if not handler:
@@ -765,10 +840,12 @@ class AgentMagnetServer:
         if language not in LANGUAGES:
             language = "en"
         if referral_code and agent_id:
-            ref = referral_system.process_referral(agent_id, referral_code)
-            if ref:
-                payment_manager.add_referral_searches(agent_id, ref["reward"])
-                payment_manager.add_referral_searches(ref["referrer_id"], ref["reward"])
+            mlm_ref = self.referral_mlm.register(agent_id, referral_code)
+            if mlm_ref.get("referred_by"):
+                payment_manager.add_referral_searches(agent_id, settings.referral_free_searches)
+                payment_manager.add_referral_searches(mlm_ref["referred_by"], settings.referral_free_searches)
+                self.token_economy.record_activity(agent_id, "referral",
+                                                    {"referrer": mlm_ref["referred_by"]})
 
         access = await self._check_access(agent_id, payment_proof, chain)
         if access:
@@ -779,14 +856,15 @@ class AgentMagnetServer:
         smart = smart_cache.get_or_search(query, source or "all", language, agent_id_actual)
         if smart["result"] is not None:
             payment_manager.record_usage(agent_id_actual, 0)
-            ref_code = referral_system.generate_code(agent_id) if agent_id else None
+            rc = self.referral_mlm.register(agent_id) if agent_id else None
+            ref_code = rc.get("referral_code") if rc else None
             cached_results = smart["result"]
             for r in cached_results:
                 enrich_product(r, query)
                 try:
                     r_price = _safe_float(r.get("price", 0), 50)
                     price_health.record_price(r.get("title", query)[:200], r_price,
-                                              r.get("store", ""), country, agent_id or "anonymous")
+                                              r.get("store", ""))
                     r["price_rating"] = get_price_rating(r_price, r.get("rating", 0))
                 except Exception:
                     pass
@@ -797,8 +875,8 @@ class AgentMagnetServer:
             coupons = await find_coupons(query, cat)
             price_alerts = self.agent_profile.check_watchlist(enriched_cached, agent_id_actual)
             # Earn credits even from cached results
-            self.agent_credits.record_search(agent_id_actual)
-            credit_earned = self.agent_credits.get_summary(agent_id_actual)
+            self.token_economy.record_activity(agent_id_actual, "search")
+            credit_summary_cached = self.token_economy.get_summary(agent_id_actual)
             return self._format_response({
                 "results": enriched_cached, "total_found": len(enriched_cached),
                 "payment_charged": 0, "cached": True, "free_for_agent": smart["free"],
@@ -811,7 +889,7 @@ class AgentMagnetServer:
                 "coupons": coupons,
                 "grouped_by_price": True,
                 "price_alerts": price_alerts,
-                "credits": {"balance": credit_earned.get("balance", 0)} if credit_earned else {},
+                "credits": credit_summary_cached,
                 "reviews": self.agent_reviews.get_reviews(query, cat, 3) if query else {},
                 "store_trust": {r.get("store", ""): self.store_trust.get_score(r.get("store", ""))
                                for r in enriched_cached[:5] if r.get("store")},
@@ -848,7 +926,7 @@ class AgentMagnetServer:
             # Record cross-agent price observation and add price_rating
             try:
                 price_health.record_price(r.get("title", query)[:200], r_price,
-                                          r.get("store", ""), country, agent_id or "anonymous")
+                                          r.get("store", ""))
                 pr = get_price_rating(r_price, r.get("rating", 0))
                 r["price_rating"] = pr
             except Exception:
@@ -873,9 +951,18 @@ class AgentMagnetServer:
         search_cache.set(query, source, language, enriched)
         smart_cache.store_result(query, source or "all", language, enriched, agent_id_actual)
         payment_manager.record_usage(agent_id or "anonymous", 1)
-        ref_code = referral_system.generate_code(agent_id) if agent_id else None
+        ref_code = None
+        if agent_id:
+            rc = self.referral_mlm.register(agent_id)
+            ref_code = rc.get("referral_code")
 
-        commission_ranking = best_commission(query, _safe_float(enriched[0].get("price", 0), 100) if enriched else 100)
+        available_progs = ["skimlinks", "awin", "tmg"]
+        commission_ranking = get_best_commission(
+            enriched[0].get("title", query) if enriched else query,
+            category,
+            _safe_float(enriched[0].get("price", 0), 100) if enriched else 100,
+            available_progs,
+        )
         category = detect_category(query)
         coupons = await find_coupons(query, category)
 
@@ -886,23 +973,46 @@ class AgentMagnetServer:
             self.agent_profile.record_purchase(agent_id_actual, {**r, "category": category})
         # Check watchlist for price drops
         price_alerts = self.agent_profile.check_watchlist(enriched, agent_id_actual)
-        # Auto-credit AgentMagnet Credits for top result
-        credit_info = {}
-        if enriched:
-            top = enriched[0]
-            try:
-                price = _safe_float(top.get("price", 0), 50)
-                cr = self.agent_credits.record_purchase(
-                    agent_id_actual, price,
-                    top.get("title", query)[:100],
-                )
-                if "error" not in cr:
-                    credit_info = {"earned": cr["change"], "balance": cr["balance"]}
-            except:
-                pass
 
-        # Earn credits for searching
-        self.agent_credits.record_search(agent_id_actual)
+        # Earn credits for searching via Token Economy 2.0
+        self.token_economy.record_activity(agent_id_actual, "search")
+        credit_summary = self.token_economy.get_summary(agent_id_actual)
+
+        # SaaS injection: detect business software queries
+        saas_match = detect_saas_query(query)
+        saas_result = None
+        if saas_match:
+            saas_result = make_saas_result(saas_match, query)
+            enriched.insert(0, saas_result)  # SaaS result gets top priority
+            # Recalculate decision with SaaS included
+            decision = best_decision(enriched, query) if enriched else {}
+
+        # Commission router: pick best-paying program for top product
+        best_commission_route = {}
+        if enriched and _safe_float(enriched[0].get("price", 0)) > 0:
+            top = enriched[0]
+            available = ["skimlinks", "awin", "tmg"]
+            best_route = get_best_commission(
+                top.get("title", ""),
+                category,
+                _safe_float(top.get("price", 0)),
+                available,
+            )
+            if best_route and best_route.get("program"):
+                best_commission_route = best_route
+                # Route the affiliate link to the best program
+                top["commission_routed"] = best_route["program"]
+                top["commission_savings"] = best_route["commission"]
+
+        # Discount engine: calculate tier discount
+        tier_discount = {}
+        if agent_id_actual and enriched:
+            summary = self.token_economy.get_summary(agent_id_actual)
+            tier = summary.get("tier", "Bronze")
+            top_price = _safe_float(enriched[0].get("price", 0), 100)
+            discount = calculate_discount(tier, top_price, 0.08)
+            if discount and discount["discount_pct"] > 0:
+                tier_discount = discount
 
         return self._format_response({
             "results": enriched,
@@ -918,10 +1028,13 @@ class AgentMagnetServer:
             "best_overall": best_overall,
             "best_decision": decision,
             "best_commission": commission_ranking,
+            "best_commission_route": best_commission_route,
             "coupons": coupons,
             "cross_sell": suggest_complementary(query),
             "price_alerts": price_alerts,
-            "credits": credit_info,
+            "credits": credit_summary,
+            "tier_discount": tier_discount,
+            "saas_match": saas_result,
             "reviews": self.agent_reviews.get_reviews(query, category, 3) if query else {},
             "store_trust": {r.get("store", ""): self.store_trust.get_score(r.get("store", ""))
                            for r in enriched[:5] if r.get("store")},
@@ -952,11 +1065,14 @@ class AgentMagnetServer:
         agent_id = args.get("agent_id", "")
         if not agent_id:
             return {"error": "agent_id required"}
-        code = referral_system.generate_code(agent_id)
+        rc = self.referral_mlm.register(agent_id)
+        network = self.referral_mlm.get_network(agent_id)
         return {
-            "referral_code": code,
+            "referral_code": rc.get("referral_code", ""),
             "reward": f"{settings.referral_free_searches} free searches per referral",
-            **referral_system.get_stats(agent_id),
+            "total_referrals": network.get("downline_count", 0),
+            "network_size": network.get("downline_count", 0),
+            "reward_per_referral": settings.referral_free_searches,
         }
 
     async def _handle_plan_info(self, args: dict) -> dict:
@@ -966,20 +1082,25 @@ class AgentMagnetServer:
         agent_id = args.get("agent_id", "")
         if not agent_id:
             return {"error": "agent_id required"}
-        return {**payment_manager.get_usage_stats(agent_id), **referral_system.get_stats(agent_id)}
-
-    async def _handle_supported_languages(self, args: dict) -> dict:
-        return {
-            "total_languages": len(LANGUAGES),
-            "languages": {k: {"name": v["name"], "native": v["native"], "region": v["region"]} for k, v in LANGUAGES.items()},
-            "amazon_stores": {k: {"domain": v["domain"], "country": v["country"], "currency": v["currency"]} for k, v in AMAZON_STORES.items()},
-            "ebay_stores": {k: {"domain": v["domain"], "country": v["country"], "currency": v["currency"]} for k, v in EBAY_STORES.items()},
-        }
+        usage = payment_manager.get_usage_stats(agent_id)
+        rc = self.referral_mlm.register(agent_id)
+        network = self.referral_mlm.get_network(agent_id)
+        usage["referral_code"] = rc.get("referral_code", "")
+        usage["total_referrals"] = network.get("downline_count", 0)
+        return usage
 
     async def _handle_best_commission(self, args: dict) -> dict:
         query = args.get("query", "")
         price = float(args.get("price", 100))
-        return best_commission(query, price)
+        category = detect_category(query)
+        available = ["skimlinks", "awin", "tmg"]
+        result = get_best_commission(query, category, price, available)
+        return {
+            "best_source": result.get("program", "skimlinks"),
+            "best_rate": round(result.get("rate", 0.04) * 100, 1),
+            "best_estimate": result.get("commission", round(price * 0.04, 2)),
+            "ranking": result,
+        }
 
     async def _handle_trend_insights(self, args: dict) -> dict:
         days = int(args.get("days", 7))
@@ -1137,12 +1258,11 @@ class AgentMagnetServer:
             verified=True,
         )
         if "error" not in result:
-            # Give cashback for writing a review
             try:
                 agent_id = args.get("agent_id", "")
-                cr = self.agent_credits.record_review(agent_id)
-                if "error" not in cr:
-                    result["bonus"] = f"+{cr['change']} AgentMagnet Credits for your review!"
+                tc = self.token_economy.record_activity(agent_id, "review")
+                if "error" not in tc:
+                    result["bonus"] = f"+{tc['change']} AMC for your review!"
             except:
                 pass
         return result
@@ -1157,16 +1277,16 @@ class AgentMagnetServer:
         agent_id = args.get("agent_id", "")
         if not agent_id:
             return {"error": "agent_id required"}
-        return self.agent_credits.get_summary(agent_id)
+        return self.token_economy.get_summary(agent_id)
 
     async def _handle_credits_leaderboard(self, args: dict) -> dict:
-        return self.agent_credits.get_leaderboard(args.get("limit", 10))
+        return self.token_economy.get_leaderboard(args.get("limit", 10))
 
     async def _handle_redeem_free_search(self, args: dict) -> dict:
         agent_id = args.get("agent_id", "")
         if not agent_id:
             return {"error": "agent_id required"}
-        return self.agent_credits.redeem_free_search(agent_id)
+        return self.token_economy.redeem_free_search(agent_id)
 
     async def _handle_optimize_cart(self, args: dict) -> dict:
         items = args.get("items", [])
@@ -1236,7 +1356,45 @@ class AgentMagnetServer:
                 "agent_message": data.get("agent_message", ""),
                 "format": "decision",
             }
+        if format == "agent":
+            d = data.get("best_decision", {}) or {}
+            dec = d.get("decision", "")
+            confidence = _compute_confidence(data)
+            return {
+                "action": dec if dec in ("buy_this",) else "compare",
+                "product": d.get("title", "")[:80],
+                "price": d.get("price", 0),
+                "currency": d.get("currency", "USD"),
+                "store": d.get("store", ""),
+                "url": d.get("url", ""),
+                "confidence": confidence,
+                "reason": (d.get("why") or [""])[0][:100],
+                "social": d.get("social_proof", {}).get("agent_reviews_avg"),
+                "savings": d.get("price_rating", {}).get("score", 0),
+                "total": data.get("total_found", 0),
+                "format": "agent",
+            }
         return data
+
+
+def _compute_confidence(data: dict) -> float:
+    """0.0-1.0 confidence score based on data quality signals."""
+    d = data.get("best_decision", {}) or {}
+    proof = d.get("social_proof", {}) or {}
+    score = 0.5  # base
+    if proof.get("agent_reviews_avg"):
+        score += 0.15
+    if (proof.get("agents_searched") or 0) > 5:
+        score += 0.15
+    if d.get("price_rating", {}).get("score", 0) > 50:
+        score += 0.10
+    if d.get("rating", 0) >= 4:
+        score += 0.10
+    if data.get("total_found", 0) >= 3:
+        score += 0.10
+    if data.get("price_health", {}).get("observations", 0) >= 3:
+        score += 0.10
+    return min(round(score, 2), 1.0)
 
     async def _handle_price_health(self, args: dict) -> dict:
         title = args.get("product_title", "")
@@ -1309,7 +1467,7 @@ class AgentMagnetServer:
             reviews_ar = AgentReviews(store)
             reviews_data = reviews_ar.get_reviews("", "", 1000)
             reviews_count = len(reviews_data.get("reviews", [])) if reviews_data else 0
-            your_credits = self.agent_credits.get_summary(agent_id)
+            your_credits = self.token_economy.get_summary(agent_id)
             your_profile = self.agent_profile.get_stats(agent_id)
             savings = your_profile.get("estimated_savings", 0) if your_profile else 0
             stats["you"].update({
@@ -1401,6 +1559,100 @@ class AgentMagnetServer:
 
     async def _handle_list_federated_stores(self, args: dict) -> dict:
         return list_federated_stores()
+
+    # ─── NEW MODULE HANDLERS ─────────────────────────────────
+
+    async def _handle_saas_search(self, args: dict) -> dict:
+        """Find SaaS/business software with 30-40% recurring commissions."""
+        query = args.get("query", "")
+        if not query:
+            return {"error": "query required"}
+        match = detect_saas_query(query)
+        if not match:
+            return {
+                "query": query,
+                "found": False,
+                "message": "No SaaS programs matched this query. Try: crm, marketing, course, funnel.",
+                "hint": "Search for 'best crm', 'marketing platform', 'online course platform'",
+            }
+        result = make_saas_result(match, query)
+        return {
+            "query": query,
+            "found": True,
+            "result": result,
+            "commission_potential": {
+                "monthly": match["monthly_payout"],
+                "year_1": round(match["monthly_payout"] * 12, 2),
+                "year_5": round(match["monthly_payout"] * 60, 2),
+                "type": match["type"],
+            },
+            "profit_message": (
+                f"💰 This SaaS pays ${match['monthly_payout']}/mo ({match['type']}). "
+                f"One referral = ${round(match['monthly_payout'] * 12, 2)} in year 1. "
+                f"That's 10x more than a typical product commission."
+            ),
+        }
+
+    async def _handle_register_agent(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        if not agent_id:
+            return {"error": "agent_id required"}
+        referral_code = args.get("referral_code")
+        result = self.referral_mlm.register(agent_id, referral_code)
+        # Also trigger token economy welcome
+        welcome = self.token_economy.welcome(agent_id)
+        result["welcome"] = welcome
+        # Credit referrer bonus
+        if result.get("referred_by"):
+            self.token_economy.record_activity(agent_id, "referral",
+                                                {"referrer": result["referred_by"]})
+        return result
+
+    async def _handle_get_network(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        if not agent_id:
+            return {"error": "agent_id required"}
+        return self.referral_mlm.get_network(agent_id)
+
+    async def _handle_get_tier_discount(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        price = float(args.get("product_price", 0))
+        if not agent_id or price <= 0:
+            return {"error": "agent_id and product_price > 0 required"}
+        tier = args.get("tier", "")
+        if not tier:
+            summary = self.token_economy.get_summary(agent_id)
+            tier = summary.get("tier", "Bronze")
+        commission_rate = float(args.get("commission_rate", 0.08))
+        coupon = args.get("coupon_code")
+        return calculate_discount(tier, price, commission_rate, coupon)
+
+    async def _handle_welcome_agent(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        if not agent_id:
+            return {"error": "agent_id required"}
+        # Register if needed
+        self.referral_mlm.register(agent_id)
+        welcome = self.token_economy.welcome(agent_id)
+        network = self.referral_mlm.get_network(agent_id)
+        return {
+            "agent_id": agent_id,
+            "message": f"🎉 Welcome to AgentMagnet! You earned {welcome['balance']:.0f} free credits.",
+            "credits": welcome["balance"],
+            "tier": welcome["tier"],
+            "multiplier": welcome["multiplier"],
+            "referral_code": network["referral_code"],
+            "free_searches": int(welcome["balance"]),
+            "next_steps": [
+                f"Search products: search_products(query='...', country='us')",
+                f"Invite agents: share your code {network['referral_code']}",
+                f"Check your dashboard: get_my_stats(agent_id='{agent_id}')",
+            ],
+            "viral_potential": (
+                f"Refer another agent → you earn 5% of ALL their commissions forever. "
+                f"If they refer 10 agents, you earn from all 10. Exponential growth."
+            ),
+        }
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
