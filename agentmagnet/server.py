@@ -17,6 +17,7 @@ from .tools.commission_optimizer import best_commission, get_commission_estimate
 from .tools.trend_predictor import TrendPredictor
 from .tools.cross_sell import suggest_complementary
 from .tools.agent_commerce import AgentCommerce
+from .tools.product_comparison import enrich_product, group_by_product, get_best_overall, detect_category
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -273,11 +274,20 @@ class AgentMagnetServer:
         if cached:
             payment_manager.record_usage(agent_id or "anonymous", 0)
             ref_code = referral_system.generate_code(agent_id) if agent_id else None
+            for r in cached:
+                enrich_product(r, query)
+            enriched_cached, comp_cached = group_by_product(cached, query)
+            best = get_best_overall(enriched_cached, query)
+            cat = detect_category(query)
             return {
-                "results": cached, "total_found": len(cached),
+                "results": enriched_cached, "total_found": len(enriched_cached),
                 "payment_charged": 0, "cached": True, "language": language,
-                "stores_used": list(set(r.get("store", "") for r in cached)),
+                "category": cat,
+                "stores_used": list(set(r.get("store", "") for r in enriched_cached)),
                 "referral_code": ref_code,
+                "best_overall": best,
+                "price_comparison": comp_cached[:5],
+                "grouped_by_price": True,
                 "agent_message": f"Results in {LANGUAGES[language]['native']}." + (f" Share: {ref_code}" if ref_code else ""),
             }
 
@@ -295,9 +305,8 @@ class AgentMagnetServer:
                 continue
 
         results.sort(key=lambda r: _safe_float(r.get("price", 0), 999999))
-        results = results[:max_results]
 
-        # Enrich with commission optimization
+        # Enrich with commission optimization, images, ratings, specs
         for r in results:
             r["tracking"] = {"source": "AgentMagnet v2", "agent_id": agent_id or "anonymous", "timestamp": int(time.time())}
             r_price = _safe_float(r.get("price", 0), 50)
@@ -306,10 +315,16 @@ class AgentMagnetServer:
                 query,
                 r_price,
             )
+            enrich_product(r, query)
+
+        # Group by product, show best price first
+        enriched, price_comparison = group_by_product(results, query)
+        enriched = enriched[:max_results]
+        best_overall = get_best_overall(enriched, query)
 
         # Record for trend prediction
         try:
-            for r in results:
+            for r in enriched:
                 self.trend_predictor.record_search(
                     query, language,
                     r.get("country", ""),
@@ -318,20 +333,25 @@ class AgentMagnetServer:
         except Exception:
             pass
 
-        search_cache.set(query, source, language, results)
+        search_cache.set(query, source, language, enriched)
         payment_manager.record_usage(agent_id or "anonymous", 1)
         ref_code = referral_system.generate_code(agent_id) if agent_id else None
 
-        # Add best commission ranking
-        commission_ranking = best_commission(query, _safe_float(results[0].get("price", 0), 100) if results else 100)
+        commission_ranking = best_commission(query, _safe_float(enriched[0].get("price", 0), 100) if enriched else 100)
+        category = detect_category(query)
 
         return {
-            "results": results, "total_found": len(results),
+            "results": enriched,
+            "total_found": len(enriched),
             "payment_charged": payment_manager.PRICE if payment_proof else 0,
-            "cached": False, "language": language,
-            "stores_used": list(set(r.get("store", "") for r in results)),
+            "cached": False,
+            "language": language,
+            "category": category,
+            "stores_used": list(set(r.get("store", "") for r in enriched)),
             "referral_code": ref_code,
             "agent_message": f"Results in {LANGUAGES[language]['native']}." + (f" Share: {ref_code}" if ref_code else ""),
+            "best_overall": best_overall,
+            "price_comparison": price_comparison[:5],
             "best_commission": commission_ranking,
             "cross_sell": suggest_complementary(query),
         }
