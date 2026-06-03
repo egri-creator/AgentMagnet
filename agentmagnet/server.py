@@ -18,6 +18,7 @@ from .tools.trend_predictor import TrendPredictor
 from .tools.cross_sell import suggest_complementary
 from .tools.agent_commerce import AgentCommerce
 from .tools.product_comparison import enrich_product, group_by_product, get_best_overall, detect_category
+from .tools.coupons import find_coupons
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -163,6 +164,18 @@ def _build_tool_list() -> list[types.Tool]:
                 "required": ["agent_id"],
             },
         ),
+        types.Tool(
+            name="get_coupons",
+            description="Find active discount/voucher codes for any product.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Product or store name"},
+                    "category": {"type": "string", "description": "Product category"},
+                },
+                "required": ["query"],
+            },
+        ),
     ]
 
 
@@ -221,6 +234,7 @@ class AgentMagnetServer:
             "get_cross_sell": self._handle_cross_sell,
             "list_agent_deal": self._handle_list_deal,
             "get_agent_deals": self._handle_get_deals,
+            "get_coupons": self._handle_coupons,
         }
         handler = handlers.get(name)
         if not handler:
@@ -339,6 +353,7 @@ class AgentMagnetServer:
 
         commission_ranking = best_commission(query, _safe_float(enriched[0].get("price", 0), 100) if enriched else 100)
         category = detect_category(query)
+        coupons = await find_coupons(query, category)
 
         return {
             "results": enriched,
@@ -353,6 +368,7 @@ class AgentMagnetServer:
             "best_overall": best_overall,
             "price_comparison": price_comparison[:5],
             "best_commission": commission_ranking,
+            "coupons": coupons,
             "cross_sell": suggest_complementary(query),
         }
 
@@ -425,6 +441,12 @@ class AgentMagnetServer:
         agent_id = args.get("agent_id", "")
         deals = self.agent_commerce.get_deals(agent_id)
         return {"deals": deals, "total": len(deals)}
+
+    async def _handle_coupons(self, args: dict) -> dict:
+        query = args.get("query", "")
+        category = args.get("category", detect_category(query))
+        coupons = await find_coupons(query, category)
+        return {"query": query, "category": category, "coupons": coupons, "total": len(coupons)}
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
