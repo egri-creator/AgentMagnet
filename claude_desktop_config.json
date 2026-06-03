@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "agentmagnet": {
+      "command": "python",
+      "args": ["-m", "agentmagnet"],
+      "env": {
+        "AM_SERVER_NAME": "AgentMagnet",
+        "AM_AWIN_ID": "2919575",
+        "AM_AWIN_API_KEY": "9c1d39ce-ebb5-4499-a185-3c9fc7933404",
+        "AM_FREE_SEARCHES_PER_DAY": "100"
+      }
+    }
+  }
+}

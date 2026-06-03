@@ -187,6 +187,44 @@ MCP_DIRECTORIES = [
             "command": "python -m agentmagnet",
         },
     },
+
+    # ─── Tier 4: Additional AI Platforms ───
+    {
+        "name": "Zapier MCP",
+        "url": "https://actions.zapier.com/api/mcp/servers",
+        "method": "POST",
+        "payload_template": {
+            "name": "AgentMagnet",
+            "description": "Search products across 40+ stores, compare prices, and earn affiliate commissions. Use in any Zap.",
+            "command": "python -m agentmagnet",
+        },
+    },
+    {
+        "name": "Make.com (MCP Module)",
+        "url": "https://make.com/api/mcp/modules",
+        "method": "POST",
+        "payload_template": {
+            "name": "AgentMagnet",
+            "description": "MCP module for Make.com: AI agent commerce across 40+ stores worldwide.",
+            "command": "python -m agentmagnet",
+        },
+    },
+    {
+        "name": "WordPress MCP Plugin",
+        "url": "https://api.wordpress.org/plugins/info/1.2/",
+        "method": "GET",
+        "note": "Create WordPress plugin: github.com/egri-creator/agentmagnet-wp",
+    },
+    {
+        "name": "Windsurf (MCP Registry)",
+        "url": "https://windsurf.com/api/mcp/servers",
+        "method": "POST",
+        "payload_template": {
+            "name": "AgentMagnet",
+            "description": "Windsurf MCP server: product search + commerce for AI agents in 85 languages.",
+            "command": "python -m agentmagnet",
+        },
+    },
 ]
 
 OPENAI_ACTIONS_SPEC = {
