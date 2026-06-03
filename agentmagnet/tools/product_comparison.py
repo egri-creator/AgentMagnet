@@ -3,6 +3,8 @@
 import re
 import hashlib
 
+from .price_rating import get_price_rating
+
 CATEGORY_KEYWORDS = {
     "laptop": ["laptop", "notebook", "macbook", "chromebook", "thinkpad"],
     "phone": ["phone", "smartphone", "iphone", "galaxy", "pixel", "xiaomi"],
@@ -96,7 +98,15 @@ def enrich_product(product: dict, query: str) -> dict:
     product["shipping"] = shipping
     product["category"] = cat
     product["specs"] = extract_specs(product.get("title", ""))
-    
+
+    # Price rating: is this a good deal?
+    try:
+        price_val = float(product.get("price", 0))
+        if price_val > 0:
+            product["price_rating"] = get_price_rating(price_val, product.get("title", ""), cat)
+    except (ValueError, TypeError):
+        pass
+
     return product
 
 

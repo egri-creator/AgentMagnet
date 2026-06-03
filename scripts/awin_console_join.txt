@@ -1,0 +1,45 @@
+// Awin Auto-Join: Pega esto en la consola del navegador (F12 > Console)
+// En la página: https://ui.awin.com/dashboard/awin/publisher/2919575/programmes/directory
+
+(async () => {
+  const DELAY_MS = 1500;
+  let total = 0;
+
+  while (true) {
+    // Find all join buttons
+    const btns = document.querySelectorAll(
+      'button:has(.icon-add), button:contains("Join"), button:contains("Unirse"), ' +
+      '[data-testid*="join"], [data-testid*="apply"], ' +
+      'button[ng-reflect-message*="join"], button[ng-reflect-message*="Join"]'
+    );
+
+    if (btns.length === 0) {
+      console.log(`✅ Done! Total joined: ${total}`);
+      break;
+    }
+
+    for (const btn of btns) {
+      try {
+        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await new Promise(r => setTimeout(r, 500));
+        btn.click();
+        total++;
+        console.log(`✅ Joined ${total}: ${btn.closest('tr')?.querySelector('td')?.textContent?.trim() || 'programme'}`);
+        await new Promise(r => setTimeout(r, DELAY_MS));
+      } catch (e) {
+        console.error('❌ Error:', e);
+      }
+    }
+
+    // Try to go to next page
+    const nextBtn = document.querySelector('[aria-label="Next"], .pagination-next, button:contains("Next"), a:contains("Next")');
+    if (nextBtn) {
+      nextBtn.click();
+      console.log('📄 Going to next page...');
+      await new Promise(r => setTimeout(r, 3000));
+    } else {
+      console.log(`✅ All pages done! Total joined: ${total}`);
+      break;
+    }
+  }
+})();

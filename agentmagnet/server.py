@@ -20,6 +20,8 @@ from .tools.agent_commerce import AgentCommerce
 from .tools.product_comparison import enrich_product, group_by_product, get_best_overall, detect_category
 from .tools.coupons import find_coupons
 from .tools.decision_engine import score_product, best_decision, smart_cache, format_response
+from .tools.agent_profile import AgentProfile
+from .tools.price_rating import get_price_rating, get_historical_trend
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -210,6 +212,77 @@ def _build_tool_list() -> list[types.Tool]:
             description="See how many cached queries exist — free searches for agents from other agents' queries.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="set_preference",
+            description="Save a preference to your agent profile. Agents REMEMBER what they like.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                    "key": {"type": "string", "description": "Preference name (e.g., preferred_store, max_budget, language)"},
+                    "value": {"type": "string", "description": "Preference value (e.g., amazon, 500, en)"},
+                },
+                "required": ["agent_id", "key", "value"],
+            },
+        ),
+        types.Tool(
+            name="get_profile",
+            description="Get your agent profile: preferences, purchase history, watchlist, stats.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                },
+                "required": ["agent_id"],
+            },
+        ),
+        types.Tool(
+            name="watch_product",
+            description="Watch a product for price drops. Get alerted when price hits your target.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                    "query": {"type": "string", "description": "Product to watch (e.g., MacBook Pro)"},
+                    "max_price": {"type": "number", "description": "Buy alert when price drops below this"},
+                },
+                "required": ["agent_id", "query"],
+            },
+        ),
+        types.Tool(
+            name="get_network_activity",
+            description="See what other agents are searching and buying — social proof for AI agents.",
+            inputSchema={"type": "object", "properties": {
+                "agent_id": {"type": "string", "description": "Your agent ID"},
+                "days": {"type": "integer", "description": "Lookback days", "default": 7},
+                "category": {"type": "string", "description": "Filter by category"},
+            }},
+        ),
+        types.Tool(
+            name="get_price_rating",
+            description="Is this a good price? Rates 0-100 with verdict: BUY NOW, Good Deal, Average, Overpriced, Too Expensive.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "price": {"type": "number", "description": "Current product price"},
+                    "product_title": {"type": "string", "description": "Product name"},
+                    "category": {"type": "string", "description": "Product category"},
+                },
+                "required": ["price", "product_title"],
+            },
+        ),
+        types.Tool(
+            name="get_price_trend",
+            description="Price trend direction for any product category — should I buy now or wait?",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "description": "Product category"},
+                    "days": {"type": "integer", "description": "Lookback days", "default": 30},
+                },
+                "required": ["category"],
+            },
+        ),
     ]
 
 
@@ -234,6 +307,7 @@ class AgentMagnetServer:
         ]
         self.trend_predictor = TrendPredictor(store)
         self.agent_commerce = AgentCommerce(store)
+        self.agent_profile = AgentProfile(store)
         self._register_handlers()
 
     def _register_handlers(self):
@@ -272,6 +346,12 @@ class AgentMagnetServer:
             "get_best_decision": self._handle_best_decision,
             "batch_search": self._handle_batch_search,
             "get_cache_stats": self._handle_cache_stats,
+            "set_preference": self._handle_set_preference,
+            "get_profile": self._handle_get_profile,
+            "watch_product": self._handle_watch_product,
+            "get_network_activity": self._handle_network_activity,
+            "get_price_rating": self._handle_price_rating,
+            "get_price_trend": self._handle_price_trend,
         }
         handler = handlers.get(name)
         if not handler:
@@ -335,6 +415,7 @@ class AgentMagnetServer:
             cat = detect_category(query)
             decision = best_decision(enriched_cached, query) if enriched_cached else {}
             coupons = await find_coupons(query, cat)
+            price_alerts = self.agent_profile.check_watchlist(enriched_cached, agent_id_actual)
             return {
                 "results": enriched_cached, "total_found": len(enriched_cached),
                 "payment_charged": 0, "cached": True, "free_for_agent": smart["free"],
@@ -346,6 +427,7 @@ class AgentMagnetServer:
                 "price_comparison": comp_cached[:5],
                 "coupons": coupons,
                 "grouped_by_price": True,
+                "price_alerts": price_alerts,
                 "agent_message": ("FREE from cache (another agent searched this)" if smart["free"]
                                   else "Cached result") + f" in {LANGUAGES[language]['native']}.",
             }
@@ -403,6 +485,12 @@ class AgentMagnetServer:
 
         decision = best_decision(enriched, query) if enriched else {}
 
+        # Auto-record into agent profile
+        for r in enriched[:3]:
+            self.agent_profile.record_purchase(agent_id_actual, {**r, "category": category})
+        # Check watchlist for price drops
+        price_alerts = self.agent_profile.check_watchlist(enriched, agent_id_actual)
+
         return {
             "results": enriched,
             "total_found": len(enriched),
@@ -419,6 +507,7 @@ class AgentMagnetServer:
             "best_commission": commission_ranking,
             "coupons": coupons,
             "cross_sell": suggest_complementary(query),
+            "price_alerts": price_alerts,
         }
 
     async def _handle_payment_info(self, args: dict) -> dict:
@@ -523,6 +612,90 @@ class AgentMagnetServer:
 
     async def _handle_cache_stats(self, args: dict) -> dict:
         return smart_cache.cache_stats()
+
+    async def _handle_set_preference(self, args: dict) -> dict:
+        return self.agent_profile.set_preference(
+            args.get("agent_id", ""),
+            args.get("key", ""),
+            args.get("value", ""),
+        )
+
+    async def _handle_get_profile(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        if not agent_id:
+            return {"error": "agent_id required"}
+        prefs = self.agent_profile.get_preferences(agent_id)
+        history = self.agent_profile.get_history(agent_id)
+        watchlist = self.agent_profile.get_watchlist(agent_id)
+        stats = self.agent_profile.get_stats(agent_id)
+        # Check watchlist for price drops
+        alerts = []
+        for w in watchlist:
+            if w.get("query"):
+                check = await self._handle_search({"query": w["query"], "max_results": 3, "agent_id": agent_id})
+                if "results" in check:
+                    alerts.extend(self.agent_profile.check_watchlist(check["results"], agent_id))
+        return {
+            "preferences": prefs,
+            "purchase_history": history,
+            "watchlist": watchlist,
+            "price_drop_alerts": alerts,
+            "stats": stats,
+            "agent_message": f"Welcome back, Agent {agent_id[:16]}... You've saved ~${stats['estimated_savings']:.2f} using AgentMagnet.",
+        }
+
+    async def _handle_watch_product(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        query = args.get("query", "")
+        max_price = args.get("max_price", 0)
+        return self.agent_profile.add_to_watchlist(agent_id, query, max_price)
+
+    async def _handle_network_activity(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        days = int(args.get("days", 7))
+        category = args.get("category")
+        # Pull activity from trend data and agent profiles
+        trend_report = self.trend_predictor.get_trend_report() if days > 0 else {}
+        trending = trend_report.get("trending_keywords", [])
+        popular_categories = trend_report.get("categories", [])
+        # Top purchases across agents
+        top_purchases = []
+        try:
+            rows = store.fetchall(
+                "SELECT data FROM agent_profiles ORDER BY updated_at DESC LIMIT 20"
+            ) if store else []
+            for row in rows:
+                try:
+                    data = json.loads(row["data"])
+                    for h in data.get("history", []):
+                        if category and category.lower() not in h.get("category", "").lower():
+                            continue
+                        top_purchases.append(h)
+                except:
+                    pass
+        except:
+            pass
+        return {
+            "trending_searches": trending[:5],
+            "popular_categories": popular_categories[:5],
+            "recent_agent_purchases": top_purchases[:10],
+            "total_agents_active": len(set(
+                r.get("agent_id", "") for r in top_purchases if "agent_id" in r
+            )),
+            "agent_message": f"{len(trending)} trending products, {len(top_purchases)} recent purchases by the agent community.",
+            "days": days,
+        }
+
+    async def _handle_price_rating(self, args: dict) -> dict:
+        price = float(args.get("price", 0))
+        title = args.get("product_title", "")
+        category = args.get("category", "general")
+        return get_price_rating(price, title, category)
+
+    async def _handle_price_trend(self, args: dict) -> dict:
+        category = args.get("category", "general")
+        days = int(args.get("days", 30))
+        return get_historical_trend(category, days)
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

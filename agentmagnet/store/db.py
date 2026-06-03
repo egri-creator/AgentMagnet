@@ -49,6 +49,7 @@ class Store:
             "CREATE TABLE IF NOT EXISTS total_usage (agent_id TEXT PRIMARY KEY, count INTEGER DEFAULT 0)",
             "CREATE TABLE IF NOT EXISTS trend_queries (day_key TEXT, query TEXT, language TEXT, country TEXT, source TEXT, count INTEGER DEFAULT 1, PRIMARY KEY (day_key, query, language, country, source))",
             "CREATE TABLE IF NOT EXISTS agent_deals (deal_id TEXT PRIMARY KEY, title TEXT, price REAL, source TEXT, affiliate_url TEXT, commission_pct REAL, agent_id TEXT, markup_pct REAL, created_at TEXT)",
+            "CREATE TABLE IF NOT EXISTS agent_profiles (agent_id TEXT PRIMARY KEY, data TEXT, updated_at TEXT)",
         ]
         conn = self.conn
         for s in schema:
