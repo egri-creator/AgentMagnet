@@ -3,6 +3,7 @@ Todos los links pasan por Skimlinks → ganamos comisión de CADA clic."""
 
 import time
 from ..config import settings
+from .region_filter import federated_stores_for_region, detect_region, get_region_message
 
 
 # Registry of all federated stores with affiliate info
@@ -221,15 +222,23 @@ def _detect_fed_category(query: str) -> str:
 
 
 def search_federated(query: str, max_results: int = 10,
-                     stores: list = None) -> dict:
+                     stores: list = None, region: str = "",
+                     language: str = "en") -> dict:
     """Search across ALL federated stores for the best prices."""
     q = query.lower().strip()
     category = _detect_fed_category(query)
 
-    # Filter stores by category relevance
+    # Auto-detect region if not specified
+    if not region:
+        region = detect_region(language)
+    allowed_fed = federated_stores_for_region(region) if region != "all" else list(FEDERATED_STORES.keys())
+
+    # Filter stores by region + category relevance
     available_stores = []
     for sid, info in FEDERATED_STORES.items():
         if stores and sid not in stores:
+            continue
+        if sid not in allowed_fed:
             continue
         if category == "general" or category in info["categories"]:
             available_stores.append(sid)
@@ -300,6 +309,8 @@ def search_federated(query: str, max_results: int = 10,
     return {
         "query": query,
         "category": category,
+        "region": region,
+        "region_message": get_region_message(region, language),
         "total_stores_searched": len(available_stores),
         "total_results": len(results),
         "stores_searched": [{"id": sid, "name": FEDERATED_STORES[sid]["name"]}

@@ -67,6 +67,8 @@ def _build_tool_list() -> list[types.Tool]:
                     "referral_code": {"type": "string", "description": "Referral code from another agent"},
                     "chain": {"type": "string", "enum": ["base", "ethereum", "polygon", "arbitrum", "optimism", "bnb", "solana"],
                               "description": "Which chain you're paying from. Default: base"},
+                    "region": {"type": "string", "enum": ["auto", "europe", "americas", "asia", "middleeast", "oceania", "africa", "all"],
+                               "description": "Region for store filtering. Auto-detects from language. EU users see EU stores, not US."},
                     "payment_proof": {
                         "type": "object",
                         "properties": {
@@ -456,6 +458,8 @@ def _build_tool_list() -> list[types.Tool]:
                         "type": "array", "items": {"type": "string"},
                         "description": "Specific stores to search (e.g., ['bestbuy', 'walmart', 'costco'])",
                     },
+                    "region": {"type": "string", "enum": ["auto", "europe", "americas", "asia", "middleeast", "oceania", "africa", "all"],
+                               "description": "Region for store filtering. Auto from language."},
                 },
                 "required": ["query"],
             },
@@ -596,6 +600,7 @@ class AgentMagnetServer:
         referral_code = args.get("referral_code")
         payment_proof = args.get("payment_proof")
         chain = args.get("chain", "base")
+        region = args.get("region", "auto")
 
         if language not in LANGUAGES:
             language = "en"
@@ -630,7 +635,7 @@ class AgentMagnetServer:
             return {
                 "results": enriched_cached, "total_found": len(enriched_cached),
                 "payment_charged": 0, "cached": True, "free_for_agent": smart["free"],
-                "language": language, "category": cat,
+                "language": language, "category": cat, "region": region,
                 "stores_used": list(set(r.get("store", "") for r in enriched_cached)),
                 "referral_code": ref_code,
                 "best_overall": best,
@@ -730,7 +735,7 @@ class AgentMagnetServer:
             "payment_charged": payment_manager.PRICE if payment_proof else 0,
             "cached": False,
             "free_for_agent": False,
-            "language": language,
+            "language": language, "region": region,
             "category": category,
             "stores_used": list(set(r.get("store", "") for r in enriched)),
             "referral_code": ref_code,
@@ -1038,10 +1043,14 @@ class AgentMagnetServer:
         )
 
     async def _handle_search_federated(self, args: dict) -> dict:
+        region = args.get("region", "auto")
+        language = args.get("language", "en")
         return search_federated(
             args.get("query", ""),
             args.get("max_results", 10),
             args.get("stores", None),
+            region,
+            language,
         )
 
     async def _handle_list_federated_stores(self, args: dict) -> dict:
