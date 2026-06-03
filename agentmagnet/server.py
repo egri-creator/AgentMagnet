@@ -29,6 +29,7 @@ from .tools.buying_guides import find_guide, list_guides
 from .tools.store_trust import StoreTrust
 from .tools.sponsored import SponsoredListings
 from .tools.federated_search import search_federated, list_federated_stores
+from .tools.region_filter import COUNTRY_AMAZON
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -62,14 +63,11 @@ def _build_tool_list() -> list[types.Tool]:
                     "source": {"type": "string", "enum": ["amazon", "ebay", "aliexpress", "saas", "b2b"]},
                     "min_price": {"type": "number"},
                     "max_price": {"type": "number"},
-                    "country": {"type": "string", "description": "Store code (com, de, uk, fr, jp, etc.)"},
+                    "country": {"type": "string", "description": "Your country (us, uk, de, fr, es, mx, co). Maps to correct Amazon/Ebay store."},
                     "agent_id": {"type": "string", "description": "Your agent ID for referral tracking"},
                     "referral_code": {"type": "string", "description": "Referral code from another agent"},
                     "chain": {"type": "string", "enum": ["base", "ethereum", "polygon", "arbitrum", "optimism", "bnb", "solana"],
                               "description": "Which chain you're paying from. Default: base"},
-                    "region": {"type": "string", "enum": ["auto", "europe", "americas", "asia", "middleeast", "oceania", "africa", "all"],
-                               "description": "Region for store filtering. Auto-detects from language. EU users see EU stores, not US."},
-                    "country": {"type": "string", "description": "Your country code (es, mx, co, us, de, fr, etc.). Required for accurate store filtering. A Colombian sees Latin American stores, not Spain."},
                     "payment_proof": {
                         "type": "object",
                         "properties": {
@@ -603,7 +601,13 @@ class AgentMagnetServer:
         referral_code = args.get("referral_code")
         payment_proof = args.get("payment_proof")
         chain = args.get("chain", "base")
-        region = args.get("region", "auto")
+        # country-based Amazon store locale
+        if country and country in COUNTRY_AMAZON:
+            amazon_locale = COUNTRY_AMAZON[country]
+        elif country:
+            amazon_locale = country
+        else:
+            amazon_locale = "com"
 
         if language not in LANGUAGES:
             language = "en"
@@ -638,7 +642,7 @@ class AgentMagnetServer:
             return {
                 "results": enriched_cached, "total_found": len(enriched_cached),
                 "payment_charged": 0, "cached": True, "free_for_agent": smart["free"],
-                "language": language, "category": cat, "region": region,
+                "language": language, "category": cat, "amazon_locale": amazon_locale,
                 "stores_used": list(set(r.get("store", "") for r in enriched_cached)),
                 "referral_code": ref_code,
                 "best_overall": best,
@@ -738,7 +742,7 @@ class AgentMagnetServer:
             "payment_charged": payment_manager.PRICE if payment_proof else 0,
             "cached": False,
             "free_for_agent": False,
-            "language": language, "region": region,
+            "language": language, "amazon_locale": amazon_locale,
             "category": category,
             "stores_used": list(set(r.get("store", "") for r in enriched)),
             "referral_code": ref_code,

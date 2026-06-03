@@ -3,7 +3,8 @@ Todos los links pasan por Skimlinks → ganamos comisión de CADA clic."""
 
 import time
 from ..config import settings
-from .region_filter import (federated_stores_for, detect_country, get_scope_message,
+from .region_filter import (federated_stores_for, validate_country,
+                            get_scope_message, COUNTRY_AMAZON,
                             STORE_SHIPPING, EU_COUNTRIES)
 
 
@@ -131,6 +132,19 @@ FEDERATED_STORES = {
     },
 }
 
+# Category hierarchy: specific → broad (so "laptop" matches "electronics" stores)
+CATEGORY_PARENTS = {
+    "laptop": ["electronics", "computer"],
+    "phone": ["electronics"],
+    "headphones": ["electronics"],
+    "tv": ["electronics", "home"],
+    "monitor": ["electronics", "computer"],
+    "ssd": ["electronics", "computer"],
+    "camera": ["electronics"],
+    "fashion": ["home"],
+    "tools": ["home"],
+}
+
 # Mock product data per category (realistic prices for major stores)
 MOCK_PRODUCTS = {
     "electronics": [
@@ -229,9 +243,28 @@ def search_federated(query: str, max_results: int = 10,
     q = query.lower().strip()
     category = _detect_fed_category(query)
 
-    # Detect country and scope
+    # Country is REQUIRED — never guess from language
     if not country:
-        country = detect_country(language)
+        return {
+            "query": query,
+            "category": category,
+            "error": True,
+            "error_type": "country_required",
+            "message": "⚠️ Country is required. Language alone is not enough.",
+            "detail": f"'en' = 20+ countries (US, UK, AU, NZ, CA, IN, IE, ZA...). "
+                      f"'es' = 20+ countries (ES, MX, CO, AR, PE, CL, EC...)",
+            "example": {"search_federated": {"query": query, "country": "es"}},
+            "results": [],
+        }
+    if not validate_country(country):
+        return {
+            "query": query,
+            "error": True,
+            "error_type": "invalid_country",
+            "message": f"⚠️ '{country}' is not a supported country.",
+            "valid_countries": list(COUNTRY_AMAZON.keys()),
+            "results": [],
+        }
     allowed_fed = federated_stores_for(country, scope)
 
     # Filter stores by region + category relevance
@@ -241,8 +274,17 @@ def search_federated(query: str, max_results: int = 10,
             continue
         if sid not in allowed_fed:
             continue
-        if category == "general" or category in info["categories"]:
+        if category == "general":
             available_stores.append(sid)
+        else:
+            store_cats = info.get("categories", [])
+            if category in store_cats:
+                available_stores.append(sid)
+            elif category in CATEGORY_PARENTS:
+                for parent in CATEGORY_PARENTS[category]:
+                    if parent in store_cats:
+                        available_stores.append(sid)
+                        break
 
     # Find matching products
     cat_products = MOCK_PRODUCTS.get(category, MOCK_PRODUCTS["general"])
@@ -307,7 +349,7 @@ def search_federated(query: str, max_results: int = 10,
                 "savings_pct": round((1 - r["price"] / max_price) * 100, 1) if max_price > 0 else 0,
             }
 
-    scope_info = get_scope_message(country, scope, language)
+    scope_info = get_scope_message(country, scope)
     return {
         "query": query,
         "category": category,
