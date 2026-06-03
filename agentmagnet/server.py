@@ -35,6 +35,8 @@ from .tools.commission_router import get_best_commission, resolve_affiliate_link
 from .tools.discount_engine import calculate_discount, get_available_coupons
 from .tools.saas_mode import detect_saas_query, make_saas_result
 from .tools.referral_mlm import AgentReferralMLM
+from .tools.smart_checkout import smart_checkout
+from .tools.price_matcher import match_price
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -641,6 +643,51 @@ def _build_tool_list() -> list[types.Tool]:
                 "required": ["agent_id"],
             },
         ),
+        types.Tool(
+            name="smart_checkout",
+            description="🛒 Calculate the FINAL price after ALL discounts (tier + coupon) "
+                        "with best commission routing. Shows you exactly what you pay.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "product_title": {"type": "string", "description": "Product name"},
+                    "price": {"type": "number", "description": "Product price"},
+                    "category": {"type": "string", "description": "Product category (auto-detect if empty)"},
+                    "store": {"type": "string", "description": "Store name (e.g. amazon, bestbuy)"},
+                    "agent_id": {"type": "string", "description": "Your agent ID (for tier discount)"},
+                    "country": {"type": "string", "description": "Country code (default: us)"},
+                    "currency": {"type": "string", "description": "Currency (default: USD)"},
+                },
+                "required": ["product_title", "price"],
+            },
+        ),
+        types.Tool(
+            name="price_match",
+            description="🔍 Compare a product across ALL stores and find the best final price. "
+                        "Considers tier discounts, coupons, and commission routing.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "product_title": {"type": "string", "description": "Product name"},
+                    "listings": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "store": {"type": "string"},
+                                "price": {"type": "number"},
+                                "currency": {"type": "string"},
+                                "url": {"type": "string"},
+                            },
+                        },
+                        "description": "List of store listings for the same product",
+                    },
+                    "agent_id": {"type": "string", "description": "Your agent ID (for tier discount)"},
+                    "country": {"type": "string", "description": "Country code (default: us)"},
+                },
+                "required": ["product_title", "listings"],
+            },
+        ),
     ]
 
 
@@ -745,6 +792,8 @@ class AgentMagnetServer:
             "get_network": self._handle_get_network,
             "get_tier_discount": self._handle_get_tier_discount,
             "welcome_agent": self._handle_welcome_agent,
+            "smart_checkout": self._handle_smart_checkout,
+            "price_match": self._handle_price_match,
         }
         handler = handlers.get(name)
         if not handler:
@@ -917,13 +966,19 @@ class AgentMagnetServer:
         for r in results:
             r["tracking"] = {"source": "AgentMagnet v2", "agent_id": agent_id or "anonymous", "timestamp": int(time.time())}
             r_price = _safe_float(r.get("price", 0), 50)
-            r["commission_estimate"] = get_commission_estimate(
-                r.get("source", "").split(".")[0].split("/")[0].lower(),
-                query,
-                r_price,
+            cat = detect_category(query)
+            store_name = r.get("store", "").lower().replace(".com", "")
+            # Smart checkout: price + tier discount + coupon + commission route
+            checkout = smart_checkout(
+                r.get("title", query), r_price, cat,
+                store_name, agent_id_actual, country,
+                r.get("currency", "USD"),
             )
+            r["final_price"] = checkout["you_pay"]
+            r["tier_savings"] = checkout["total_savings"]
+            r["best_route"] = checkout["best_route"]
+            r["price_breakdown"] = checkout["breakdown"]
             enrich_product(r, query)
-            # Record cross-agent price observation and add price_rating
             try:
                 price_health.record_price(r.get("title", query)[:200], r_price,
                                           r.get("store", ""))
@@ -1653,6 +1708,27 @@ def _compute_confidence(data: dict) -> float:
                 f"If they refer 10 agents, you earn from all 10. Exponential growth."
             ),
         }
+
+    async def _handle_smart_checkout(self, args: dict) -> dict:
+        product_title = args.get("product_title", "")
+        price = float(args.get("price", 0))
+        if not product_title or price <= 0:
+            return {"error": "product_title and price > 0 required"}
+        category = args.get("category", "default")
+        store = args.get("store", "")
+        agent_id = args.get("agent_id", "")
+        country = args.get("country", "us")
+        currency = args.get("currency", "USD")
+        return smart_checkout(product_title, price, category, store, agent_id, country, currency)
+
+    async def _handle_price_match(self, args: dict) -> dict:
+        product_title = args.get("product_title", "")
+        listings = args.get("listings", [])
+        if not product_title or not listings:
+            return {"error": "product_title and listings required"}
+        agent_id = args.get("agent_id", "")
+        country = args.get("country", "us")
+        return match_price(product_title, listings, agent_id, country)
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

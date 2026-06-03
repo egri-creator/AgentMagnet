@@ -9,3 +9,5 @@ build/
 PyPI-Recovery-Codes-*.txt
 data/
 !data/.gitkeep
+*.user.js
+strategy.md

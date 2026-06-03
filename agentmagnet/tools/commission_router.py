@@ -14,7 +14,7 @@ from typing import Optional
 COMMISSION_RATES = {
     # Skimlinks is the universal gateway — covers Amazon + 200K+ merchants
     "skimlinks": {
-        "default": 0.04,
+        "default": 0.055,
         "laptops": 0.04, "electronics": 0.04, "computers": 0.04,
         "furniture": 0.08, "home": 0.08, "kitchen": 0.08,
         "sports": 0.06, "outdoors": 0.06, "toys": 0.06,
@@ -29,9 +29,9 @@ COMMISSION_RATES = {
         "travel": 0.06, "insurance": 0.08, "finance": 0.07,
         "software": 0.10, "education": 0.06,
     },
-    # TMG Product Supplies — B2B industrial
+    # TMG Product Supplies — B2B industrial only (low default, only wins on industrial)
     "tmg": {
-        "default": 0.06,
+        "default": 0.02,
         "industrial": 0.08, "janitorial": 0.07, "packaging": 0.07,
         "office": 0.05, "breakroom": 0.05,
     },
