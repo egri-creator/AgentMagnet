@@ -68,23 +68,85 @@ def detect_category(query: str) -> str:
     return "default"
 
 
+def extract_structured_specs(title: str, category: str = "general") -> dict:
+    """Extract structured Product DNA: named fields for agents to reason with."""
+    dna = {}
+    t = title.lower()
+
+    # RAM
+    m = re.search(r'(\d+)\s*(?:gb|GB)\s*(?:ddr[345]\s*)?ram', t) or re.search(r'(\d+)\s*gb\s*ram', t)
+    if m:
+        dna["ram"] = f"{m.group(1)}GB"
+
+    # Storage
+    m = re.search(r'(\d+)\s*(tb|gb)\s*(?:ssd|nvme|hdd|storage|hd)', t) or re.search(r'(\d+)\s*(tb|gb)\s*(?:ssd)', t)
+    if m:
+        val = m.group(1)
+        unit = m.group(2).upper()
+        dna["storage"] = f"{val}{unit}"
+
+    # CPU / Processor
+    m = re.search(r'(intel\s+\w+[\-\d]+|amd\s+ryzen\s+[\d]+|m[234]\s*(?:pro|max|ultra)?|apple\s+m[234])', t, re.IGNORECASE)
+    if m:
+        dna["processor"] = m.group(1).strip()
+
+    # GPU
+    m = re.search(r'(rtx\s+[\d]+|gtx\s+[\d]+|rx\s+[\d]+|intel\s+arc|m\d+\s*(?:pro|max|ultra)?\s*gpu)', t, re.IGNORECASE)
+    if m:
+        dna["gpu"] = m.group(1).strip()
+
+    # Screen size
+    m = re.search(r'(\d+[\.\d]*)\s*(?:inch|"|pulgadas|in)\b', t)
+    if m:
+        dna["screen_size"] = f'{m.group(1)}"'
+
+    # Weight
+    m = re.search(r'(\d+[\.\d]*)\s*(?:kg|g|lbs|libras)', t)
+    if m:
+        dna["weight"] = m.group(0).strip()
+
+    # Battery
+    m = re.search(r'(\d+)\s*(?:mah|wh|mwh)', t, re.IGNORECASE)
+    if m:
+        dna["battery"] = m.group(0).upper()
+
+    # Resolution
+    m = re.search(r'(\d{3,4})\s*x\s*(\d{3,4})', t)
+    if m:
+        dna["resolution"] = f'{m.group(1)}x{m.group(2)}'
+
+    # Refresh rate
+    m = re.search(r'(\d+)\s*hz', t)
+    if m:
+        dna["refresh_rate"] = f'{m.group(1)}Hz'
+
+    # Connectivity / Ports
+    if re.search(r'usb[-\s]*c|thunderbolt|hdmi|displayport|wifi[-\s]*6|bluetooth\s*5', t):
+        dna["connectivity"] = []
+        if re.search(r'usb[-\s]*c|thunderbolt', t):
+            dna["connectivity"].append("USB-C")
+        if re.search(r'hdmi', t):
+            dna["connectivity"].append("HDMI")
+        if re.search(r'displayport', t):
+            dna["connectivity"].append("DisplayPort")
+        if re.search(r'wifi[-\s]*6', t):
+            dna["connectivity"].append("WiFi 6")
+        if re.search(r'bluetooth\s*5', t):
+            dna["connectivity"].append("Bluetooth 5")
+        if re.search(r'thunderbolt', t):
+            dna["connectivity"].append("Thunderbolt")
+
+    return dna
+
+
 def extract_specs(title: str) -> list:
-    """Extract key specs from product title."""
-    specs = []
-    patterns = [
-        (r'(\d+[\.\d]*\s*(?:GB|TB|g|Hz|MP|mm|inch|"|cm))', "Capacity/Size"),
-        (r'(\d{4,4}x\d{3,4})', "Resolution"),
-        (r'(\d+[-/]\d+[-/]\d+)', "Date"),
-    ]
-    for pattern, label in patterns:
-        m = re.search(pattern, title, re.IGNORECASE)
-        if m:
-            specs.append(f"{label}: {m.group(1)}")
-    return specs
+    """Extract key specs from product title (legacy format)."""
+    dna = extract_structured_specs(title)
+    return [f"{k}: {v}" if not isinstance(v, list) else f"{k}: {', '.join(v)}" for k, v in dna.items()]
 
 
 def enrich_product(product: dict, query: str) -> dict:
-    """Enrich a product with image, rating, specs, shipping."""
+    """Enrich a product with image, rating, specs, shipping, and structured Product DNA."""
     cat = detect_category(f"{query} {product.get('title', '')}")
     
     img = PRODUCT_IMAGE_MOCK.get(cat, PRODUCT_IMAGE_MOCK["default"])
@@ -98,6 +160,7 @@ def enrich_product(product: dict, query: str) -> dict:
     product["shipping"] = shipping
     product["category"] = cat
     product["specs"] = extract_specs(product.get("title", ""))
+    product["dna"] = extract_structured_specs(product.get("title", ""), cat)
 
     # Price rating: is this a good deal?
     try:

@@ -29,7 +29,9 @@ from .tools.buying_guides import find_guide, list_guides
 from .tools.store_trust import StoreTrust
 from .tools.sponsored import SponsoredListings
 from .tools.federated_search import search_federated, list_federated_stores
-from .tools.region_filter import COUNTRY_AMAZON
+from .tools.region_filter import COUNTRY_AMAZON, COUNTRY_NAME, validate_country
+from .tools.price_health import price_health
+from .tools.speed_dial import speed_dial
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -64,6 +66,8 @@ def _build_tool_list() -> list[types.Tool]:
                     "min_price": {"type": "number"},
                     "max_price": {"type": "number"},
                     "country": {"type": "string", "description": "Your country (us, uk, de, fr, es, mx, co). Maps to correct Amazon/Ebay store."},
+                    "format": {"type": "string", "enum": ["full", "compact", "decision"],
+                               "description": "full=everything. compact=only titles+prices+stores. decision=only best pick. Saves tokens!"},
                     "agent_id": {"type": "string", "description": "Your agent ID for referral tracking"},
                     "referral_code": {"type": "string", "description": "Referral code from another agent"},
                     "chain": {"type": "string", "enum": ["base", "ethereum", "polygon", "arbitrum", "optimism", "bnb", "solana"],
@@ -472,6 +476,102 @@ def _build_tool_list() -> list[types.Tool]:
             description="List all 12+ federated stores available for real-time price comparison.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="get_price_health",
+            description="📊 Cross-agent price check: lowest price seen, average paid by other agents, price trend.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "product_title": {"type": "string", "description": "Exact product title to check"},
+                },
+                "required": ["product_title"],
+            },
+        ),
+        types.Tool(
+            name="get_trending_deals",
+            description="🔥 Deals with biggest price difference — where agents save the most.",
+            inputSchema={"type": "object", "properties": {"limit": {"type": "integer", "default": 5}}},
+        ),
+        types.Tool(
+            name="save_template",
+            description="💾 Save a search template (Agent Speed Dial). @name expands to full params.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                    "name": {"type": "string", "description": "Short name (e.g., @monitor4k)"},
+                    "params": {
+                        "type": "object",
+                        "description": 'Search params like {"query":"monitor 4K","country":"mx","max_price":600}',
+                    },
+                },
+                "required": ["agent_id", "name", "params"],
+            },
+        ),
+        types.Tool(
+            name="get_template",
+            description="🔍 Recall a saved search template by name.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                    "name": {"type": "string", "description": "Template name (e.g., monitor4k without @)"},
+                },
+                "required": ["agent_id", "name"],
+            },
+        ),
+        types.Tool(
+            name="list_templates",
+            description="📋 List all your saved search templates.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                },
+                "required": ["agent_id"],
+            },
+        ),
+        types.Tool(
+            name="delete_template",
+            description="🗑️ Delete a saved search template.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                    "name": {"type": "string", "description": "Template name to delete"},
+                },
+                "required": ["agent_id", "name"],
+            },
+        ),
+        types.Tool(
+            name="get_agent_scoreboard",
+            description="🏆 Agent rankings: savings, reviews written, searches, deals discovered.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID (for percentile)"},
+                    "limit": {"type": "integer", "default": 10},
+                },
+                "required": ["agent_id"],
+            },
+        ),
+        types.Tool(
+            name="super_search",
+            description="⚡ Single call: search + best decision + price health + coupons + cross_sell + price rating. "
+                        "Everything in ONE response. Saves maximum tokens.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Product to search"},
+                    "country": {"type": "string", "description": "Your country (required)"},
+                    "max_price": {"type": "number", "description": "Maximum price"},
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                    "format": {"type": "string", "enum": ["full", "compact", "decision"],
+                               "description": "Response format. compact = tokens saved!"},
+                },
+                "required": ["query", "country"],
+            },
+        ),
     ]
 
 
@@ -562,6 +662,14 @@ class AgentMagnetServer:
             "add_store_review": self._handle_add_store_review,
             "search_federated": self._handle_search_federated,
             "list_federated_stores": self._handle_list_federated_stores,
+            "get_price_health": self._handle_price_health,
+            "get_trending_deals": self._handle_trending_deals,
+            "save_template": self._handle_save_template,
+            "get_template": self._handle_get_template,
+            "list_templates": self._handle_list_templates,
+            "delete_template": self._handle_delete_template,
+            "get_agent_scoreboard": self._handle_agent_scoreboard,
+            "super_search": self._handle_super_search,
         }
         handler = handlers.get(name)
         if not handler:
@@ -605,13 +713,54 @@ class AgentMagnetServer:
         referral_code = args.get("referral_code")
         payment_proof = args.get("payment_proof")
         chain = args.get("chain", "base")
-        # country-based Amazon store locale
-        if country and country in COUNTRY_AMAZON:
-            amazon_locale = COUNTRY_AMAZON[country]
-        elif country:
-            amazon_locale = country
+        client_ip = args.get("_client_ip")
+        format = args.get("format", "full")
+
+        # Smart Context: auto-fill all missing params from agent profile
+        if agent_id and not all([country, language, max_price, source]):
+            try:
+                pref = self.agent_profile.get_profile(agent_id)
+                if pref and "preferences" in pref:
+                    p = pref["preferences"]
+                    if not country and p.get("country"):
+                        country = p["country"]
+                    if language == detect_language(query) and p.get("language"):
+                        language = p["language"]
+                    if not max_price and p.get("max_budget"):
+                        max_price = float(p["max_budget"])
+                    if not source and p.get("preferred_store"):
+                        source = p["preferred_store"]
+            except Exception:
+                pass
+
+        # Country detection chain: explicit → agent profile → IP geo → error
+        if not country and client_ip:
+            try:
+                from .tools.geoip import detect_country_from_ip
+                detected = detect_country_from_ip(client_ip)
+                if detected:
+                    country = detected
+            except Exception:
+                pass
+        if country and not validate_country(country):
+            return {
+                "error": "invalid_country",
+                "message": f"⚠️ '{country}' no es un país válido. Usa código ISO (us, mx, co, es, uk, de, fr, it...).",
+                "valid_countries": {k: v for k, v in sorted(COUNTRY_NAME.items())},
+                "example": {"search_products": {"query": query, "country": "es"}},
+            }
+        if country:
+            amazon_locale = COUNTRY_AMAZON.get(country, "com")
         else:
-            amazon_locale = "com"
+            return {
+                "error": "country_required",
+                "message": "⚠️ El país es obligatorio. El idioma no es suficiente.",
+                "detail": "'en' se habla en 20+ países (us, uk, au, in, ca...). "
+                          "'es' se habla en 20+ países (mx, co, es, ar, pe...). "
+                          "Especifica country= para obtener resultados correctos.",
+                "example": {"search_products": {"query": query, "country": "co"}},
+                "valid_countries": {k: v for k, v in sorted(COUNTRY_NAME.items())},
+            }
 
         if language not in LANGUAGES:
             language = "en"
@@ -634,6 +783,13 @@ class AgentMagnetServer:
             cached_results = smart["result"]
             for r in cached_results:
                 enrich_product(r, query)
+                try:
+                    r_price = _safe_float(r.get("price", 0), 50)
+                    price_health.record_price(r.get("title", query)[:200], r_price,
+                                              r.get("store", ""), country, agent_id or "anonymous")
+                    r["price_rating"] = get_price_rating(r_price, r.get("rating", 0))
+                except Exception:
+                    pass
             enriched_cached, comp_cached = group_by_product(cached_results, query)
             best = get_best_overall(enriched_cached, query)
             cat = detect_category(query)
@@ -643,7 +799,7 @@ class AgentMagnetServer:
             # Earn credits even from cached results
             self.agent_credits.record_search(agent_id_actual)
             credit_earned = self.agent_credits.get_summary(agent_id_actual)
-            return {
+            return self._format_response({
                 "results": enriched_cached, "total_found": len(enriched_cached),
                 "payment_charged": 0, "cached": True, "free_for_agent": smart["free"],
                 "language": language, "category": cat, "amazon_locale": amazon_locale,
@@ -662,7 +818,7 @@ class AgentMagnetServer:
                 "sponsored": self.sponsored.get_listings(query, 2),
                 "agent_message": ("FREE from cache (another agent searched this)" if smart["free"]
                                   else "Cached result") + f" in {LANGUAGES[language]['native']}.",
-            }
+            }, format)
 
         results = []
         sources = [a for a in self.affiliates if not source or a.name.lower() == source.lower()]
@@ -689,6 +845,14 @@ class AgentMagnetServer:
                 r_price,
             )
             enrich_product(r, query)
+            # Record cross-agent price observation and add price_rating
+            try:
+                price_health.record_price(r.get("title", query)[:200], r_price,
+                                          r.get("store", ""), country, agent_id or "anonymous")
+                pr = get_price_rating(r_price, r.get("rating", 0))
+                r["price_rating"] = pr
+            except Exception:
+                pass
 
         # Group by product, show best price first
         enriched, price_comparison = group_by_product(results, query)
@@ -740,7 +904,7 @@ class AgentMagnetServer:
         # Earn credits for searching
         self.agent_credits.record_search(agent_id_actual)
 
-        return {
+        return self._format_response({
             "results": enriched,
             "total_found": len(enriched),
             "payment_charged": payment_manager.PRICE if payment_proof else 0,
@@ -762,7 +926,7 @@ class AgentMagnetServer:
             "store_trust": {r.get("store", ""): self.store_trust.get_score(r.get("store", ""))
                            for r in enriched[:5] if r.get("store")},
             "sponsored": self.sponsored.get_listings(query, 2),
-        }
+        }, format)
 
     async def _handle_payment_info(self, args: dict) -> dict:
         chains = payment_manager.get_accepted_chains()
@@ -1052,6 +1216,153 @@ class AgentMagnetServer:
             support=args.get("support", 0),
             review_text=args.get("review_text", ""),
         )
+
+    def _format_response(self, data: dict, format: str = "full") -> dict:
+        if format == "compact":
+            return {
+                "results": [{"title": r.get("title"), "price": r.get("price"),
+                             "store": r.get("store"), "url": r.get("affiliate_url") or r.get("url")}
+                            for r in data.get("results", [])],
+                "total_found": data.get("total_found", 0),
+                "agent_message": data.get("agent_message", ""),
+                "best_overall": data.get("best_overall"),
+                "best_decision": data.get("best_decision"),
+                "format": "compact",
+            }
+        if format == "decision":
+            return {
+                "best_decision": data.get("best_decision"),
+                "best_overall": data.get("best_overall"),
+                "agent_message": data.get("agent_message", ""),
+                "format": "decision",
+            }
+        return data
+
+    async def _handle_price_health(self, args: dict) -> dict:
+        title = args.get("product_title", "")
+        if not title:
+            return {"error": "product_title required"}
+        health = price_health.get_health(title)
+        return {"product_title": title, **health}
+
+    async def _handle_trending_deals(self, args: dict) -> dict:
+        limit = int(args.get("limit", 5))
+        deals = price_health.get_trending_deals(limit)
+        return {"trending_deals": deals, "total": len(deals)}
+
+    async def _handle_save_template(self, args: dict) -> dict:
+        return speed_dial.save(
+            args.get("agent_id", ""),
+            args.get("name", ""),
+            args.get("params", {}),
+        )
+
+    async def _handle_get_template(self, args: dict) -> dict:
+        return speed_dial.get(
+            args.get("agent_id", ""),
+            args.get("name", ""),
+        )
+
+    async def _handle_list_templates(self, args: dict) -> dict:
+        return speed_dial.list_templates(args.get("agent_id", ""))
+
+    async def _handle_delete_template(self, args: dict) -> dict:
+        return speed_dial.delete(
+            args.get("agent_id", ""),
+            args.get("name", ""),
+        )
+
+    async def _handle_agent_scoreboard(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        limit = int(args.get("limit", 10))
+        if not agent_id:
+            return {"error": "agent_id required"}
+        stats = {
+            "you": {"agent_id": agent_id},
+        }
+        # Get per-agent stats across all agents
+        try:
+            from .tools.agent_reviews import AgentReviews
+            # Total agents in system
+            total_agents_row = store.fetchone("SELECT COUNT(*) as c FROM total_usage")
+            total_agents = total_agents_row["c"] if total_agents_row else 0
+            your_row = store.fetchone(
+                "SELECT count FROM total_usage WHERE agent_id=?", (agent_id,)
+            )
+            your_searches = your_row["count"] if your_row else 0
+            top_rows = store.fetchall(
+                "SELECT agent_id, count FROM total_usage ORDER BY count DESC LIMIT ?",
+                (limit,),
+            )
+            leaderboard = [dict(r) for r in top_rows]
+            your_rank = next(
+                (i + 1 for i, r in enumerate(leaderboard) if r["agent_id"] == agent_id),
+                None,
+            )
+            if not your_rank:
+                all_rank_row = store.fetchone(
+                    "SELECT COUNT(*) + 1 as r FROM total_usage WHERE count > ?",
+                    (your_searches,),
+                )
+                your_rank = all_rank_row["r"] if all_rank_row else total_agents
+            percentile = round((1 - your_rank / max(total_agents, 1)) * 100, 1)
+            reviews_ar = AgentReviews(store)
+            reviews_data = reviews_ar.get_reviews("", "", 1000)
+            reviews_count = len(reviews_data.get("reviews", [])) if reviews_data else 0
+            your_credits = self.agent_credits.get_summary(agent_id)
+            your_profile = self.agent_profile.get_stats(agent_id)
+            savings = your_profile.get("estimated_savings", 0) if your_profile else 0
+            stats["you"].update({
+                "searches": your_searches,
+                "rank": your_rank,
+                "total_agents": total_agents,
+                "percentile": f"top {percentile}%",
+                "estimated_savings": round(savings, 2),
+                "credits_balance": your_credits.get("balance", 0) if your_credits else 0,
+                "reviews_written": reviews_count,
+            })
+            stats["leaderboard"] = leaderboard[:limit]
+            stats["categories"] = {
+                "top_by_searches": [r["agent_id"] for r in leaderboard[:5]],
+                "top_by_savings": "Use get_credits_leaderboard for credit rankings",
+            }
+            return stats
+        except Exception as e:
+            return {"error": str(e), "your_stats": stats}
+
+    async def _handle_super_search(self, args: dict) -> dict:
+        query = args.get("query", "")
+        if not query:
+            return {"error": "query required"}
+        if not args.get("country"):
+            return {"error": "country required"}
+        # Single super-search: does everything in one call
+        search_args = {
+            "query": query,
+            "country": args.get("country"),
+            "max_price": args.get("max_price"),
+            "agent_id": args.get("agent_id"),
+            "max_results": 10,
+            "format": args.get("format", "full"),
+        }
+        search_result = await self._handle_search(search_args)
+        if "error" in search_result:
+            return search_result
+        return {
+            "query": query,
+            "country": search_result.get("language"),
+            "results": search_result.get("results", []),
+            "best_overall": search_result.get("best_overall"),
+            "best_decision": search_result.get("best_decision"),
+            "price_rating": search_result.get("results", [{}])[0].get("price_rating") if search_result.get("results") else None,
+            "coupons": search_result.get("coupons", []),
+            "price_health": price_health.get_health(query) if query else {},
+            "reviews": search_result.get("reviews", {}),
+            "store_trust": search_result.get("store_trust", {}),
+            "cross_sell": search_result.get("cross_sell", []),
+            "agent_message": search_result.get("agent_message", ""),
+            "format": args.get("format", "full"),
+        }
 
     async def _handle_search_federated(self, args: dict) -> dict:
         country = args.get("country", "")

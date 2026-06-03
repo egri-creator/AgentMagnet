@@ -24,6 +24,16 @@ STORE_SHIPPING = {
     "bol": ["nl", "be"],
 }
 
+# eBay store codes per country — definitive list
+COUNTRY_EBAY = {
+    "us": "com", "uk": "co.uk", "de": "de", "fr": "fr",
+    "es": "es", "it": "it", "ca": "ca", "au": "com.au",
+    "at": "at", "be": "be", "nl": "nl", "pl": "pl",
+    "ch": "ch", "ie": "ie", "sg": "sg", "hk": "hk",
+    "my": "my", "ph": "ph", "th": "th", "vn": "vn",
+    "in": "in", "il": "il",
+}
+
 # Amazon store codes per country — definitive list
 COUNTRY_AMAZON = {
     "us": "com", "uk": "co.uk", "de": "de", "fr": "fr",

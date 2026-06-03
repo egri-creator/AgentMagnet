@@ -30,7 +30,11 @@ class AmazonAffiliate(AffiliateProgram):
 
     async def search(self, query: str, max_results: int = 5,
                      language: str = "en", country: str | None = None) -> list[dict]:
-        store_code = get_amazon_store(language) if not country else country
+        if country:
+            from ..tools.region_filter import COUNTRY_AMAZON
+            store_code = COUNTRY_AMAZON.get(country, get_amazon_store(language))
+        else:
+            store_code = get_amazon_store(language)
         if store_code not in AMAZON_STORES:
             store_code = "com"
         store = AMAZON_STORES[store_code]

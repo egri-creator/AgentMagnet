@@ -58,6 +58,34 @@ def score_product(product: dict, query: str) -> float:
     return round(min(score, 100), 1)
 
 
+def _get_social_proof(product_title: str, store=None) -> dict:
+    """Gather cross-agent social proof: who else searched/bought this."""
+    proof = {"agents_searched": 0, "agent_reviews_avg": None, "agent_reviews_count": 0}
+    try:
+        from .agent_reviews import AgentReviews
+        from ..store.db import store as db_store
+        ar = AgentReviews(db_store)
+        reviews = ar.get_reviews(product_title, "", 5)
+        if reviews and "reviews" in reviews:
+            proof["agent_reviews_count"] = len(reviews["reviews"])
+            ratings = [r.get("rating", 0) for r in reviews["reviews"]]
+            if ratings:
+                proof["agent_reviews_avg"] = round(sum(ratings) / len(ratings), 1)
+        # Count how many agents searched this product
+        try:
+            row = db_store.fetchone(
+                "SELECT COUNT(DISTINCT agent_id) as c FROM agent_profiles WHERE data LIKE ?",
+                (f"%{product_title[:50]}%",),
+            )
+            if row:
+                proof["agents_searched"] = row["c"]
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return proof
+
+
 def best_decision(results: list, query: str) -> dict:
     """THE decision: pick the single best product for the agent."""
     if not results:
@@ -70,6 +98,20 @@ def best_decision(results: list, query: str) -> dict:
 
     scored.sort(key=lambda x: x["agent_score"], reverse=True)
     best = scored[0]
+    proof = _get_social_proof(best.get("title", ""), best.get("store"))
+
+    why = [
+        f"Best price-to-value ratio (score: {best['agent_score']}/100)",
+        f"Rating: {best.get('rating', 'N/A')}/5 ({best.get('review_count', 0)} reviews)",
+        f"Commission: {best.get('commission_estimate', 'N/A')}",
+        f"Shipping: {best.get('shipping', 'N/A')}",
+    ]
+    if proof["agent_reviews_avg"]:
+        why.append(f"Other agents rate this {proof['agent_reviews_avg']}/5 ({proof['agent_reviews_count']} reviews)")
+    if proof["agents_searched"] > 1:
+        why.append(f"{proof['agents_searched']} agents have searched this product")
+    if best.get("price_rating", {}).get("verdict"):
+        why.append(f"Price verdict: {best['price_rating']['verdict']}")
 
     return {
         "decision": "buy_this",
@@ -81,12 +123,8 @@ def best_decision(results: list, query: str) -> dict:
         "image": best.get("image_url"),
         "rating": best.get("rating"),
         "agent_score": best["agent_score"],
-        "why": [
-            f"Best price-to-value ratio (score: {best['agent_score']}/100)",
-            f"Rating: {best.get('rating', 'N/A')}/5 ({best.get('review_count', 0)} reviews)",
-            f"Commission: {best.get('commission_estimate', 'N/A')}",
-            f"Shipping: {best.get('shipping', 'N/A')}",
-        ],
+        "why": why,
+        "social_proof": proof,
         "runner_up": scored[1]["title"] if len(scored) > 1 else None,
         "total_compared": len(scored),
     }
