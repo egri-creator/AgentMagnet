@@ -19,6 +19,7 @@ from .tools.cross_sell import suggest_complementary
 from .tools.agent_commerce import AgentCommerce
 from .tools.product_comparison import enrich_product, group_by_product, get_best_overall, detect_category
 from .tools.coupons import find_coupons
+from .tools.decision_engine import score_product, best_decision, smart_cache, format_response
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -176,6 +177,39 @@ def _build_tool_list() -> list[types.Tool]:
                 "required": ["query"],
             },
         ),
+        types.Tool(
+            name="get_best_decision",
+            description="THE decision engine: picks the single best product for the agent to buy. Score 0-100.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Product to search"},
+                    "max_price": {"type": "number", "description": "Max price filter"},
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="batch_search",
+            description="Search up to 10 products in a SINGLE call. Dramatically faster.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "queries": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of product queries (up to 10)",
+                    },
+                    "agent_id": {"type": "string"},
+                },
+                "required": ["queries"],
+            },
+        ),
+        types.Tool(
+            name="get_cache_stats",
+            description="See how many cached queries exist — free searches for agents from other agents' queries.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -235,6 +269,9 @@ class AgentMagnetServer:
             "list_agent_deal": self._handle_list_deal,
             "get_agent_deals": self._handle_get_deals,
             "get_coupons": self._handle_coupons,
+            "get_best_decision": self._handle_best_decision,
+            "batch_search": self._handle_batch_search,
+            "get_cache_stats": self._handle_cache_stats,
         }
         handler = handlers.get(name)
         if not handler:
@@ -284,25 +321,33 @@ class AgentMagnetServer:
         if access:
             return access
 
-        cached = search_cache.get(query, source, language)
-        if cached:
-            payment_manager.record_usage(agent_id or "anonymous", 0)
+        # Smart cache: free for different agents on same query
+        agent_id_actual = agent_id or "anonymous"
+        smart = smart_cache.get_or_search(query, source or "all", language, agent_id_actual)
+        if smart["result"] is not None:
+            payment_manager.record_usage(agent_id_actual, 0)
             ref_code = referral_system.generate_code(agent_id) if agent_id else None
-            for r in cached:
+            cached_results = smart["result"]
+            for r in cached_results:
                 enrich_product(r, query)
-            enriched_cached, comp_cached = group_by_product(cached, query)
+            enriched_cached, comp_cached = group_by_product(cached_results, query)
             best = get_best_overall(enriched_cached, query)
             cat = detect_category(query)
+            decision = best_decision(enriched_cached, query) if enriched_cached else {}
+            coupons = await find_coupons(query, cat)
             return {
                 "results": enriched_cached, "total_found": len(enriched_cached),
-                "payment_charged": 0, "cached": True, "language": language,
-                "category": cat,
+                "payment_charged": 0, "cached": True, "free_for_agent": smart["free"],
+                "language": language, "category": cat,
                 "stores_used": list(set(r.get("store", "") for r in enriched_cached)),
                 "referral_code": ref_code,
                 "best_overall": best,
+                "best_decision": decision,
                 "price_comparison": comp_cached[:5],
+                "coupons": coupons,
                 "grouped_by_price": True,
-                "agent_message": f"Results in {LANGUAGES[language]['native']}." + (f" Share: {ref_code}" if ref_code else ""),
+                "agent_message": ("FREE from cache (another agent searched this)" if smart["free"]
+                                  else "Cached result") + f" in {LANGUAGES[language]['native']}.",
             }
 
         results = []
@@ -348,6 +393,7 @@ class AgentMagnetServer:
             pass
 
         search_cache.set(query, source, language, enriched)
+        smart_cache.store_result(query, source or "all", language, enriched, agent_id_actual)
         payment_manager.record_usage(agent_id or "anonymous", 1)
         ref_code = referral_system.generate_code(agent_id) if agent_id else None
 
@@ -355,18 +401,21 @@ class AgentMagnetServer:
         category = detect_category(query)
         coupons = await find_coupons(query, category)
 
+        decision = best_decision(enriched, query) if enriched else {}
+
         return {
             "results": enriched,
             "total_found": len(enriched),
             "payment_charged": payment_manager.PRICE if payment_proof else 0,
             "cached": False,
+            "free_for_agent": False,
             "language": language,
             "category": category,
             "stores_used": list(set(r.get("store", "") for r in enriched)),
             "referral_code": ref_code,
             "agent_message": f"Results in {LANGUAGES[language]['native']}." + (f" Share: {ref_code}" if ref_code else ""),
             "best_overall": best_overall,
-            "price_comparison": price_comparison[:5],
+            "best_decision": decision,
             "best_commission": commission_ranking,
             "coupons": coupons,
             "cross_sell": suggest_complementary(query),
@@ -447,6 +496,33 @@ class AgentMagnetServer:
         category = args.get("category", detect_category(query))
         coupons = await find_coupons(query, category)
         return {"query": query, "category": category, "coupons": coupons, "total": len(coupons)}
+
+    async def _handle_best_decision(self, args: dict) -> dict:
+        query = args.get("query", "")
+        max_price = args.get("max_price")
+        # Do a search with free tier
+        search_args = {"query": query, "max_results": 10, "agent_id": "decision_engine"}
+        if max_price:
+            search_args["max_price"] = max_price
+        results = await self._handle_search(search_args)
+        if "results" in results and results["results"]:
+            decision = best_decision(results["results"], query)
+            decision["coupons"] = await find_coupons(query, detect_category(query))
+            decision["cross_sell"] = suggest_complementary(query)
+            return decision
+        return {"decision": "no_results", "reason": "No products found"}
+
+    async def _handle_batch_search(self, args: dict) -> dict:
+        queries = args.get("queries", [])[:10]
+        agent_id = args.get("agent_id", "batch")
+        results = {}
+        for q in queries:
+            r = await self._handle_search({"query": q, "max_results": 3, "agent_id": agent_id})
+            results[q] = {"results": r.get("results", []), "best_overall": r.get("best_overall")}
+        return {"searches": results, "total_queries": len(queries), "total_results": sum(len(v["results"]) for v in results.values())}
+
+    async def _handle_cache_stats(self, args: dict) -> dict:
+        return smart_cache.cache_stats()
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
