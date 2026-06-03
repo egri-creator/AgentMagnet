@@ -3,7 +3,8 @@ Todos los links pasan por Skimlinks → ganamos comisión de CADA clic."""
 
 import time
 from ..config import settings
-from .region_filter import federated_stores_for_region, detect_region, get_region_message
+from .region_filter import (federated_stores_for, detect_country, get_scope_message,
+                            STORE_SHIPPING, EU_COUNTRIES)
 
 
 # Registry of all federated stores with affiliate info
@@ -222,16 +223,16 @@ def _detect_fed_category(query: str) -> str:
 
 
 def search_federated(query: str, max_results: int = 10,
-                     stores: list = None, region: str = "",
-                     language: str = "en") -> dict:
+                     stores: list = None, scope: str = "country",
+                     country: str = "", language: str = "en") -> dict:
     """Search across ALL federated stores for the best prices."""
     q = query.lower().strip()
     category = _detect_fed_category(query)
 
-    # Auto-detect region if not specified
-    if not region:
-        region = detect_region(language)
-    allowed_fed = federated_stores_for_region(region) if region != "all" else list(FEDERATED_STORES.keys())
+    # Detect country and scope
+    if not country:
+        country = detect_country(language)
+    allowed_fed = federated_stores_for(country, scope)
 
     # Filter stores by region + category relevance
     available_stores = []
@@ -306,11 +307,13 @@ def search_federated(query: str, max_results: int = 10,
                 "savings_pct": round((1 - r["price"] / max_price) * 100, 1) if max_price > 0 else 0,
             }
 
+    scope_info = get_scope_message(country, scope, language)
     return {
         "query": query,
         "category": category,
-        "region": region,
-        "region_message": get_region_message(region, language),
+        "country": country,
+        "scope": scope,
+        "scope_info": scope_info,
         "total_stores_searched": len(available_stores),
         "total_results": len(results),
         "stores_searched": [{"id": sid, "name": FEDERATED_STORES[sid]["name"]}

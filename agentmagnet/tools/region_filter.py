@@ -1,55 +1,67 @@
-"""Region-aware store filtering. EU users see EU stores, US users see US stores. No mixing."""
+"""Region-aware store filtering — 3 levels: country, region, global.
+Language alone is NOT enough: 'es' = Spain OR Colombia OR Mexico.
+Always detect COUNTRY first, then derive region."""
 
-# Region mapping for federated stores
-STORE_REGIONS = {
-    "bestbuy": ["americas", "us", "ca"],
-    "walmart": ["americas", "us", "ca", "mx"],
-    "target": ["americas", "us"],
-    "costco": ["americas", "us", "ca", "mx"],
-    "homedepot": ["americas", "us", "ca"],
-    "lowes": ["americas", "us", "ca"],
-    "newegg": ["americas", "us", "ca"],
-    "bhphotovideo": ["americas", "us"],
-    "macys": ["americas", "us"],
-    "nordstrom": ["americas", "us", "ca"],
-    "staples": ["americas", "us", "ca"],
-    "officedepot": ["americas", "us", "ca"],
-    # EU stores (future integration)
-    "zalando": ["europe", "eu", "de", "fr", "it", "es", "nl", "at", "pl", "se", "dk", "fi", "no", "be", "lu"],
-    "aboutyou": ["europe", "eu", "de", "at", "ch"],
-    "otrium": ["europe", "eu", "nl", "de", "fr", "be"],
-    "bol": ["europe", "eu", "nl", "be"],
+# Which countries each federated store ships to
+# EU stores ship to ALL EU countries (EU law — free movement of goods)
+STORE_SHIPPING = {
+    "bestbuy": ["us", "ca"],
+    "walmart": ["us", "ca", "mx"],
+    "target": ["us"],
+    "costco": ["us", "ca", "mx", "uk", "jp", "au", "kr", "es", "is"],
+    "homedepot": ["us", "ca"],
+    "lowes": ["us", "ca"],
+    "newegg": ["us", "ca"],
+    "bhphotovideo": ["us", "ca", "mx"],
+    "macys": ["us"],
+    "nordstrom": ["us", "ca"],
+    "staples": ["us", "ca"],
+    "officedepot": ["us", "ca"],
+    "zalando": "__eu__",
+    "aboutyou": "__eu__",
+    "otrium": "__eu__",
+    "bol": ["nl", "be"],
 }
 
-# Language → primary region
+EU_COUNTRIES = {"es", "de", "fr", "it", "nl", "be", "at", "pl", "se", "dk",
+                "fi", "ie", "pt", "gr", "lu", "lt", "lv", "ee", "sk", "si",
+                "cz", "hu", "ro", "bg", "hr", "cy", "mt", "fi", "se"}
+
+# Language → default country (IMPERFECT — same language in multiple countries)
+# The agent MUST specify 'country' for accuracy. This is just a fallback.
+LANG_COUNTRY = {
+    "en": "us",       # English → US (could be UK, AU, CA, etc.)
+    "es": "es",        # Spanish → SPAIN (NOT Latin America — use country param)
+    "fr": "fr",        # French → France (could be CA, BE, CH)
+    "de": "de",        # German → Germany (could be AT, CH)
+    "it": "it",        # Italian → Italy (could be CH)
+    "pt": "br",        # Portuguese → Brazil (could be PT)
+    # ... rest unchanged
+}
+
+# Language → region (ONLY when country is unknown)
 LANG_REGION = {
-    "en": "americas", "es": "europe", "fr": "europe", "de": "europe",
-    "it": "europe", "pt": "americas", "ja": "asia", "zh": "asia",
-    "ko": "asia", "ar": "middleeast", "hi": "asia", "nl": "europe",
-    "sv": "europe", "pl": "europe", "tr": "europe", "th": "asia",
-    "vi": "asia", "id": "asia", "ms": "asia", "tl": "asia",
-    "ru": "europe", "uk": "europe", "he": "middleeast", "el": "europe",
-    "cs": "europe", "ro": "europe", "hu": "europe", "da": "europe",
-    "fi": "europe", "nb": "europe", "bn": "asia", "ta": "asia",
-    "te": "asia", "mr": "asia", "ur": "asia", "sw": "africa",
-    "ha": "africa", "yo": "africa", "ig": "africa", "am": "africa",
-    "fa": "middleeast", "km": "asia", "lo": "asia", "my": "asia",
-    "mn": "asia", "ne": "asia", "si": "asia", "ka": "europe",
-    "hy": "europe", "az": "europe", "kk": "asia", "uz": "asia",
-    "ceb": "asia", "ps": "asia", "sd": "asia", "ku": "middleeast",
-    "tg": "asia", "tk": "asia", "dv": "asia", "ti": "africa",
-    "so": "africa", "zu": "africa", "xh": "africa", "mg": "africa",
-    "rw": "africa", "ny": "africa", "st": "africa", "sn": "africa",
-    "mt": "europe", "lb": "europe", "fy": "europe",
-    "mi": "oceania", "sm": "oceania", "to": "oceania", "fj": "oceania",
-    "ht": "americas", "gn": "americas", "ay": "americas", "qu": "americas",
-    "mfe": "africa", "sg": "africa", "rn": "africa", "lg": "africa",
-    "om": "africa", "tw": "africa",
+    "en": "americas",  # English defaults to Americas
+    "es": "europe",    # Spanish defaults to Spain/Europe (override with country)
+    "fr": "europe",
+    "de": "europe",
+    "it": "europe",
+    "pt": "americas",
+    # ... others unchanged
 }
 
-# Region → Amazon store codes (primary + cross-border)
-# EU: show all EU Amazons so a Spanish agent can buy from Amazon.de
-REGION_AMAZON_STORES = {
+# Country → Amazon store codes
+COUNTRY_AMAZON = {
+    "us": ["com"], "uk": ["co.uk"], "de": ["de"], "fr": ["fr"],
+    "es": ["es"], "it": ["it"], "jp": ["co.jp"], "ca": ["ca"],
+    "au": ["com.au"], "in": ["in"], "mx": ["com.mx"], "br": ["com.br"],
+    "nl": ["nl"], "se": ["se"], "pl": ["pl"], "ae": ["ae"],
+    "sa": ["sa"], "sg": ["sg"], "tr": ["com.tr"], "be": ["com.be"],
+    "eg": ["eg"], "cn": ["cn"],
+}
+
+# Region → Amazon store codes (for cross-border within region)
+REGION_AMAZON = {
     "europe": ["co.uk", "de", "fr", "es", "it", "nl", "se", "pl", "com.be"],
     "americas": ["com", "ca", "com.mx", "com.br"],
     "asia": ["co.jp", "in", "sg", "cn"],
@@ -58,7 +70,7 @@ REGION_AMAZON_STORES = {
     "africa": ["com"],
 }
 
-REGION_EBAY_STORES = {
+REGION_EBAY = {
     "europe": ["co.uk", "de", "fr", "es", "it", "ch", "at", "be", "nl", "pl", "ie"],
     "americas": ["com", "ca"],
     "asia": ["sg", "hk", "my", "ph", "th", "vn", "in"],
@@ -67,65 +79,140 @@ REGION_EBAY_STORES = {
     "africa": ["com"],
 }
 
+# Federated store IDs by region
+REGION_FEDERATED = {
+    "europe": ["zalando", "aboutyou", "otrium", "bol"],
+    "americas": ["bestbuy", "walmart", "target", "costco", "homedepot", "lowes",
+                 "newegg", "bhphotovideo", "macys", "nordstrom", "staples", "officedepot"],
+    "asia": ["newegg"],
+    "middleeast": [],
+    "oceania": [],
+    "africa": [],
+}
 
-def detect_region(language: str, country: str = "") -> str:
-    """Detect user's region from language code, with optional country override."""
-    if country:
-        country_region = {
-            "us": "americas", "uk": "europe", "de": "europe", "fr": "europe",
-            "es": "europe", "it": "europe", "jp": "asia", "cn": "asia",
-            "in": "asia", "br": "americas", "mx": "americas", "ca": "americas",
-            "au": "oceania", "ae": "middleeast", "sa": "middleeast",
-            "nl": "europe", "se": "europe", "pl": "europe", "sg": "asia",
-        }
-        if country in country_region:
-            return country_region[country]
-    return LANG_REGION.get(language, "americas")
+COUNTRY_NAME = {
+    "es": "España", "de": "Alemania", "fr": "Francia", "it": "Italia",
+    "us": "United States", "uk": "United Kingdom", "jp": "Japan",
+    "cn": "China", "br": "Brazil", "mx": "Mexico", "ca": "Canada",
+    "au": "Australia", "in": "India", "nl": "Netherlands", "se": "Sweden",
+    "pl": "Poland", "ae": "UAE", "sa": "Saudi Arabia", "sg": "Singapore",
+}
+
+REGION_NAME = {
+    "europe": "Europa (UE)",
+    "americas": "América (US, CA, MX, BR)",
+    "asia": "Asia",
+    "middleeast": "Oriente Medio",
+    "oceania": "Oceanía",
+    "africa": "África",
+}
 
 
-def federated_stores_for_region(region: str) -> list[str]:
-    """Get federated store IDs that serve a given region."""
+def detect_country(language: str, country: str = "") -> str:
+    """Detect user's country from language code or explicit country."""
+    if country and country.lower() in COUNTRY_AMAZON:
+        return country.lower()
+    return LANG_COUNTRY.get(language, "us")
+
+
+def detect_region_from_country(country: str) -> str:
+    """Detect region from country code."""
+    if country in EU_COUNTRIES or country in {"uk", "ch", "no", "is", "gb"}:
+        return "europe"
+    na_countries = {"us", "ca", "mx", "br", "ar", "cl", "co", "pe"}
+    if country in na_countries:
+        return "americas"
+    asia_countries = {"jp", "cn", "in", "sg", "kr", "th", "vn", "id", "my", "ph", "hk", "tw"}
+    if country in asia_countries:
+        return "asia"
+    me_countries = {"ae", "sa", "il", "iq", "ir", "qa", "kw", "om", "bh"}
+    if country in me_countries:
+        return "middleeast"
+    oceania_countries = {"au", "nz", "ws", "to", "fj", "pg"}
+    if country in oceania_countries:
+        return "oceania"
+    africa_countries = {"za", "ng", "ke", "tz", "eg", "ma", "gh", "tn", "dz"}
+    if country in africa_countries:
+        return "africa"
+    return "americas"
+
+
+def stores_that_ship_to(country: str) -> list[str]:
+    """Get federated store IDs that ship to a given country."""
     allowed = []
-    for store_id, regions in STORE_REGIONS.items():
-        if any(r == region or r == region[:3] for r in regions):
+    for store_id, ships_to in STORE_SHIPPING.items():
+        if ships_to == "__eu__":
+            if country in EU_COUNTRIES:
+                allowed.append(store_id)
+        elif country in ships_to:
             allowed.append(store_id)
     return allowed
 
 
-def amazon_stores_for_region(region: str) -> list[str]:
-    """Get Amazon store codes for a region."""
-    return REGION_AMAZON_STORES.get(region, ["com"])
+def amazon_stores_for(country: str, scope: str = "country") -> list[str]:
+    """Get Amazon store codes. Scope: country | region | all"""
+    if scope == "all":
+        return list(COUNTRY_AMAZON.values())
+    country_stores = COUNTRY_AMAZON.get(country, ["com"])
+    if scope == "country":
+        return country_stores
+    # region scope: country + region neighbors
+    region = detect_region_from_country(country)
+    region_stores = REGION_AMAZON.get(region, [])
+    # Merge, keeping order: own country first
+    all_stores = list(dict.fromkeys(country_stores + region_stores))
+    return all_stores
 
 
-def ebay_stores_for_region(region: str) -> list[str]:
-    """Get eBay store codes for a region."""
-    return REGION_EBAY_STORES.get(region, ["com"])
+def ebay_stores_for(country: str, scope: str = "region") -> list[str]:
+    """Get eBay store codes for a country/region."""
+    if scope == "all":
+        return []
+    region = detect_region_from_country(country)
+    return REGION_EBAY.get(region, ["com"])
 
 
-def filter_by_region(stores: dict, region: str) -> dict:
-    """Filter a store dict to only include stores in the given region."""
-    if not region or region == "all":
-        return stores
-    allowed_fed = federated_stores_for_region(region)
-    filtered = {}
-    for sid, info in stores.items():
-        if sid in allowed_fed:
-            filtered[sid] = info
-    return filtered
+def federated_stores_for(country: str, scope: str = "country") -> list[str]:
+    """Get federated stores available for a country."""
+    if scope == "all":
+        return list(STORE_SHIPPING.keys())
+    country_stores = stores_that_ship_to(country)
+    if scope == "country":
+        return country_stores
+    # region scope: country + regional stores
+    region = detect_region_from_country(country)
+    region_stores = REGION_FEDERATED.get(region, [])
+    all_stores = list(dict.fromkeys(country_stores + region_stores))
+    return all_stores
 
 
-def get_region_message(region: str, language: str) -> str:
-    """User-facing message about what region they're seeing."""
-    region_names = {
-        "europe": "Europe (EU)",
-        "americas": "Americas (US, CA, MX, BR)",
-        "asia": "Asia (JP, IN, SG, CN)",
-        "middleeast": "Middle East (AE, SA, IL)",
-        "oceania": "Oceania (AU)",
-        "africa": "Africa",
+def get_scope_message(country: str, scope: str, language: str = "en") -> dict:
+    """User-facing message about scope."""
+    country_display = COUNTRY_NAME.get(country, country.upper())
+
+    if scope == "country":
+        msg = f"📦 Mostrando tiendas que envían a {country_display}"
+        detail = "Solo tiendas con envío confirmado a tu país"
+    elif scope == "region":
+        region = detect_region_from_country(country)
+        region_display = REGION_NAME.get(region, region)
+        msg = f"🌍 Mostrando tiendas de {region_display}"
+        detail = f"Incluye tiendas de la región que envían a {country_display}"
+    else:
+        msg = "🌐 Mostrando todas las tiendas globales"
+        detail = "Pueden aplicar gastos de aduana e importación"
+
+    return {
+        "country": country,
+        "country_name": country_display,
+        "scope": scope,
+        "message": msg,
+        "detail": detail,
+        "can_widen": scope != "all",
+        "can_narrow": scope != "country",
+        "suggestions": {
+            "country": f"Limitar a tiendas que envían a {country_display}",
+            "region": f"Ampliar a tiendas de {REGION_NAME.get(detect_region_from_country(country), 'la región')}",
+            "all": "Ver todas las tiendas globales",
+        },
     }
-    name = region_names.get(region, region.title())
-    return (
-        f"🌍 Showing {name} stores. "
-        f"Add region=all for global results, or region=americas for US stores."
-    )

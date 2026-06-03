@@ -69,6 +69,7 @@ def _build_tool_list() -> list[types.Tool]:
                               "description": "Which chain you're paying from. Default: base"},
                     "region": {"type": "string", "enum": ["auto", "europe", "americas", "asia", "middleeast", "oceania", "africa", "all"],
                                "description": "Region for store filtering. Auto-detects from language. EU users see EU stores, not US."},
+                    "country": {"type": "string", "description": "Your country code (es, mx, co, us, de, fr, etc.). Required for accurate store filtering. A Colombian sees Latin American stores, not Spain."},
                     "payment_proof": {
                         "type": "object",
                         "properties": {
@@ -448,7 +449,8 @@ def _build_tool_list() -> list[types.Tool]:
         types.Tool(
             name="search_federated",
             description="🔍 Search Best Buy, Walmart, Target, Costco, Home Depot, Newegg and 40+ stores in REAL TIME. "
-                        "Every link is an affiliate link via Skimlinks — we earn commission on every click.",
+                        "Every link is an affiliate link via Skimlinks — we earn commission on every click. "
+                        "⚠️ Set country! A Colombian ('country=co') sees Latin America stores, not Spain.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -458,8 +460,9 @@ def _build_tool_list() -> list[types.Tool]:
                         "type": "array", "items": {"type": "string"},
                         "description": "Specific stores to search (e.g., ['bestbuy', 'walmart', 'costco'])",
                     },
-                    "region": {"type": "string", "enum": ["auto", "europe", "americas", "asia", "middleeast", "oceania", "africa", "all"],
-                               "description": "Region for store filtering. Auto from language."},
+                    "country": {"type": "string", "description": "Your country code (es, mx, co, us, de). Affects which stores you see."},
+                    "scope": {"type": "string", "enum": ["country", "region", "all"],
+                              "description": "country=only stores shipping to you. region=your region (EU sees EU). all=global."},
                 },
                 "required": ["query"],
             },
@@ -1043,14 +1046,13 @@ class AgentMagnetServer:
         )
 
     async def _handle_search_federated(self, args: dict) -> dict:
-        region = args.get("region", "auto")
-        language = args.get("language", "en")
         return search_federated(
             args.get("query", ""),
             args.get("max_results", 10),
             args.get("stores", None),
-            region,
-            language,
+            args.get("scope", "country"),
+            args.get("country", ""),
+            args.get("language", "en"),
         )
 
     async def _handle_list_federated_stores(self, args: dict) -> dict:
