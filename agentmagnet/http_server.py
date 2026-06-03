@@ -190,6 +190,14 @@ class AgentMagnetHTTPHandler:
         result = get_price_rating(price, title, category)
         return JSONResponse(result)
 
+    async def handle_api_federated(self, request: Request) -> Response:
+        from .tools.federated_search import search_federated
+        query = request.query_params.get("query", "")
+        if not query:
+            return JSONResponse({"error": "query required"})
+        result = search_federated(query)
+        return JSONResponse(result)
+
     async def handle_dashboard(self, request: Request) -> Response:
         html = """<!DOCTYPE html>
 <html lang="en">
@@ -248,6 +256,7 @@ routes = [
     Route("/api/reviews", endpoint=handler.handle_api_reviews, methods=["GET"]),
     Route("/api/price-rating", endpoint=handler.handle_api_price_rating, methods=["GET"]),
     Route("/api/stats", endpoint=handler.handle_stats, methods=["GET"]),
+    Route("/api/federated-search", endpoint=handler.handle_api_federated, methods=["GET"]),
 ]
 app = Starlette(
     routes=routes,

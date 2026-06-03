@@ -28,6 +28,7 @@ from .tools.cart_optimizer import optimize_shopping_list
 from .tools.buying_guides import find_guide, list_guides
 from .tools.store_trust import StoreTrust
 from .tools.sponsored import SponsoredListings
+from .tools.federated_search import search_federated, list_federated_stores
 from .store.db import store
 from .affiliates.amazon import AmazonAffiliate
 from .affiliates.ebay import EbayAffiliate
@@ -442,6 +443,28 @@ def _build_tool_list() -> list[types.Tool]:
                 "required": ["store", "agent_id", "overall"],
             },
         ),
+        types.Tool(
+            name="search_federated",
+            description="🔍 Search Best Buy, Walmart, Target, Costco, Home Depot, Newegg and 40+ stores in REAL TIME. "
+                        "Every link is an affiliate link via Skimlinks — we earn commission on every click.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Product to search across all stores"},
+                    "max_results": {"type": "integer", "default": 10, "maximum": 20},
+                    "stores": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "Specific stores to search (e.g., ['bestbuy', 'walmart', 'costco'])",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="list_federated_stores",
+            description="List all 12+ federated stores available for real-time price comparison.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -528,6 +551,8 @@ class AgentMagnetServer:
             "get_store_trust": self._handle_store_trust,
             "list_store_scores": self._handle_list_store_scores,
             "add_store_review": self._handle_add_store_review,
+            "search_federated": self._handle_search_federated,
+            "list_federated_stores": self._handle_list_federated_stores,
         }
         handler = handlers.get(name)
         if not handler:
@@ -1011,6 +1036,16 @@ class AgentMagnetServer:
             support=args.get("support", 0),
             review_text=args.get("review_text", ""),
         )
+
+    async def _handle_search_federated(self, args: dict) -> dict:
+        return search_federated(
+            args.get("query", ""),
+            args.get("max_results", 10),
+            args.get("stores", None),
+        )
+
+    async def _handle_list_federated_stores(self, args: dict) -> dict:
+        return list_federated_stores()
 
     async def run_stdio(self):
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
