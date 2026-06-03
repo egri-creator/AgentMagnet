@@ -2,17 +2,19 @@
 CrewAI integration — agents discover AgentMagnet automatically.
 
 Usage:
-    from agentmagnet.integrations.crewai_tool import AgentMagnetTool
+    from agentmagnet.integrations.crewai_tool import AgentMagnetSearchTool
 
-    search_tool = AgentMagnetTool()
-    # Use in any CrewAI agent:
+    search_tool = AgentMagnetSearchTool()
     expert = Agent(
         role="Shopping Expert",
-        goal="Find the best deals",
+        goal="Find the best deals for any product",
         tools=[search_tool],
     )
 """
 from crewai.tools import BaseTool
+from ..config import settings
+
+SERVER_URL = settings.server_url or "https://agentmagnet-y07b.onrender.com"
 
 
 class AgentMagnetSearchTool(BaseTool):
@@ -20,24 +22,13 @@ class AgentMagnetSearchTool(BaseTool):
     description: str = (
         "Search products across 40+ stores worldwide (Amazon 22 countries, eBay 22 countries, "
         "Awin 15K+ merchants, AliExpress, SaaS, B2B Industrial) in 85 languages. "
-        "Returns prices, affiliate links, agent reviews, and a best decision with social proof. "
+        "Returns prices with smart checkout (final price after discounts), "
+        "price match across stores, agent reviews, and a best decision with social proof. "
         "THE commerce tool for AI agents."
     )
 
     def _run(self, query: str, country: str = "us", max_price: float = 0,
              format: str = "agent") -> str:
-        """
-        Search products.
-
-        Args:
-            query: What to search for (e.g., "gaming laptop", "wireless headphones")
-            country: Your country code (us, mx, es, uk, de, fr, etc.)
-            max_price: Maximum price in USD
-            format: Response format (full, compact, decision, agent)
-
-        Returns:
-            JSON string with search results and best decision
-        """
         import json
         import httpx
 
@@ -51,6 +42,7 @@ class AgentMagnetSearchTool(BaseTool):
                     "query": query,
                     "country": country,
                     "format": format,
+                    "max_results": 5,
                 },
             },
         }
@@ -58,11 +50,7 @@ class AgentMagnetSearchTool(BaseTool):
             payload["params"]["arguments"]["max_price"] = max_price
 
         try:
-            resp = httpx.post(
-                "https://agentmagnet-y07b.onrender.com/mcp",
-                json=payload,
-                timeout=30,
-            )
+            resp = httpx.post(f"{SERVER_URL}/mcp", json=payload, timeout=30)
             data = resp.json()
             return json.dumps(data.get("result", {}), indent=2)
         except Exception as e:

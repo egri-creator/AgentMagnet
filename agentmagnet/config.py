@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     skimlinks_id: str = ""
     skimlinks_site_id: str = ""
 
+    server_url: str = "https://agentmagnet-y07b.onrender.com"
+
     x402_wallet_address: str = ""
     x402_private_key: str = ""
     x402_rpc_url: str = ""

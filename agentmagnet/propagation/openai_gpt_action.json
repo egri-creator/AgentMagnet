@@ -1,0 +1,97 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AgentMagnet - Universal Agent Commerce",
+    "description": "AI agents search products across 40+ stores (Amazon 22 countries, eBay 22, Awin 15K+, AliExpress, SaaS, B2B) in 85 languages. Compare prices, get agent reviews, smart checkout with final price after discounts, price match across stores, SaaS commissions (30-40% lifetime), and agent referral MLM. 52 MCP tools total.",
+    "version": "v3"
+  },
+  "servers": [
+    {
+      "url": "https://agentmagnet-y07b.onrender.com",
+      "description": "AgentMagnet production server"
+    }
+  ],
+  "paths": {
+    "/mcp": {
+      "post": {
+        "summary": "Call any AgentMagnet tool",
+        "operationId": "callAgentMagnet",
+        "description": "Search products, get smart checkout pricing, compare prices across stores, find SaaS software, get agent reviews, check price health, find coupons, register agents, and more.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "jsonrpc": { "type": "string", "const": "2.0" },
+                  "method": { "type": "string", "const": "tools/call" },
+                  "params": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Tool to call",
+                        "examples": ["search_products", "smart_checkout", "price_match", "saas_search"]
+                      },
+                      "arguments": {
+                        "type": "object",
+                        "description": "Tool-specific arguments"
+                      }
+                    },
+                    "required": ["name", "arguments"]
+                  }
+                },
+                "required": ["jsonrpc", "method", "params"],
+                "examples": [
+                  {
+                    "jsonrpc": "2.0",
+                    "method": "tools/call",
+                    "params": {
+                      "name": "search_products",
+                      "arguments": {
+                        "query": "gaming laptop",
+                        "country": "us",
+                        "max_results": 5,
+                        "format": "agent"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tool response with results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "content": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string" },
+                              "text": { "type": "string" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
