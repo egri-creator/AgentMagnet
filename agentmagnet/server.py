@@ -23,7 +23,7 @@ from .tools.decision_engine import score_product, best_decision, smart_cache, fo
 from .tools.agent_profile import AgentProfile
 from .tools.price_rating import get_price_rating, get_historical_trend
 from .tools.agent_reviews import AgentReviews
-from .tools.agent_cashback import AgentCashback
+from .tools.agent_credits import AgentCredits
 from .tools.cart_optimizer import optimize_shopping_list
 from .tools.buying_guides import find_guide, list_guides
 from .store.db import store
@@ -327,8 +327,8 @@ def _build_tool_list() -> list[types.Tool]:
             },
         ),
         types.Tool(
-            name="get_cashback",
-            description="💰 See your USDC cashback balance. You earn $$ from every purchase.",
+            name="get_credits",
+            description="💎 See your AgentMagnet Credits balance. Earn from searches, reviews, referrals.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -338,11 +338,22 @@ def _build_tool_list() -> list[types.Tool]:
             },
         ),
         types.Tool(
-            name="get_cashback_leaderboard",
-            description="🏆 Top-earning agents. See who earned the most USDC cashback.",
+            name="get_credits_leaderboard",
+            description="🏆 Top agents by lifetime credits earned.",
             inputSchema={"type": "object", "properties": {
                 "limit": {"type": "integer", "default": 10},
             }},
+        ),
+        types.Tool(
+            name="redeem_free_search",
+            description="🎟️ Redeem 1 credit for 1 free search (no x402 payment needed).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Your agent ID"},
+                },
+                "required": ["agent_id"],
+            },
         ),
         types.Tool(
             name="optimize_shopping_list",
@@ -412,7 +423,7 @@ class AgentMagnetServer:
         self.agent_commerce = AgentCommerce(store)
         self.agent_profile = AgentProfile(store)
         self.agent_reviews = AgentReviews(store)
-        self.agent_cashback = AgentCashback(store)
+        self.agent_credits = AgentCredits(store)
         self._register_handlers()
 
     def _register_handlers(self):
@@ -460,8 +471,9 @@ class AgentMagnetServer:
             "get_agent_reviews": self._handle_get_reviews,
             "add_agent_review": self._handle_add_review,
             "get_top_rated": self._handle_top_rated,
-            "get_cashback": self._handle_cashback,
-            "get_cashback_leaderboard": self._handle_cashback_leaderboard,
+            "get_credits": self._handle_get_credits,
+            "get_credits_leaderboard": self._handle_credits_leaderboard,
+            "redeem_free_search": self._handle_redeem_free_search,
             "optimize_shopping_list": self._handle_optimize_cart,
             "get_buying_guide": self._handle_buying_guide,
             "list_buying_guides": self._handle_list_guides,
@@ -529,6 +541,9 @@ class AgentMagnetServer:
             decision = best_decision(enriched_cached, query) if enriched_cached else {}
             coupons = await find_coupons(query, cat)
             price_alerts = self.agent_profile.check_watchlist(enriched_cached, agent_id_actual)
+            # Earn credits even from cached results
+            self.agent_credits.record_search(agent_id_actual)
+            credit_earned = self.agent_credits.get_summary(agent_id_actual)
             return {
                 "results": enriched_cached, "total_found": len(enriched_cached),
                 "payment_charged": 0, "cached": True, "free_for_agent": smart["free"],
@@ -541,6 +556,7 @@ class AgentMagnetServer:
                 "coupons": coupons,
                 "grouped_by_price": True,
                 "price_alerts": price_alerts,
+                "credits": {"balance": credit_earned.get("balance", 0)} if credit_earned else {},
                 "agent_message": ("FREE from cache (another agent searched this)" if smart["free"]
                                   else "Cached result") + f" in {LANGUAGES[language]['native']}.",
             }
@@ -603,23 +619,23 @@ class AgentMagnetServer:
             self.agent_profile.record_purchase(agent_id_actual, {**r, "category": category})
         # Check watchlist for price drops
         price_alerts = self.agent_profile.check_watchlist(enriched, agent_id_actual)
-        # Auto-credit cashback for top result
-        cashback_info = {}
+        # Auto-credit AgentMagnet Credits for top result
+        credit_info = {}
         if enriched:
             top = enriched[0]
             try:
                 price = _safe_float(top.get("price", 0), 50)
-                cb = self.agent_cashback.record_purchase(
-                    agent_id_actual,
+                cr = self.agent_credits.record_purchase(
+                    agent_id_actual, price,
                     top.get("title", query)[:100],
-                    price,
-                    0.05,
-                    top.get("store", ""),
                 )
-                if "error" not in cb:
-                    cashback_info = {"earned": cb["cashback_amount"], "tx_id": cb["tx_id"]}
+                if "error" not in cr:
+                    credit_info = {"earned": cr["change"], "balance": cr["balance"]}
             except:
                 pass
+
+        # Earn credits for searching
+        self.agent_credits.record_search(agent_id_actual)
 
         return {
             "results": enriched,
@@ -638,7 +654,7 @@ class AgentMagnetServer:
             "coupons": coupons,
             "cross_sell": suggest_complementary(query),
             "price_alerts": price_alerts,
-            "cashback": cashback_info,
+            "credits": credit_info,
             "reviews": self.agent_reviews.get_reviews(query, category, 3) if query else {},
         }
 
@@ -850,11 +866,9 @@ class AgentMagnetServer:
             # Give cashback for writing a review
             try:
                 agent_id = args.get("agent_id", "")
-                self.agent_cashback.record_purchase(
-                    agent_id, f"Review bonus: {args.get('product_title', '')[:40]}",
-                    0.01, 1.0, "reviews"
-                )
-                result["bonus"] = "You earned a micro-cashback for contributing a review!"
+                cr = self.agent_credits.record_review(agent_id)
+                if "error" not in cr:
+                    result["bonus"] = f"+{cr['change']} AgentMagnet Credits for your review!"
             except:
                 pass
         return result
@@ -865,14 +879,20 @@ class AgentMagnetServer:
             args.get("limit", 10),
         )
 
-    async def _handle_cashback(self, args: dict) -> dict:
+    async def _handle_get_credits(self, args: dict) -> dict:
         agent_id = args.get("agent_id", "")
         if not agent_id:
             return {"error": "agent_id required"}
-        return self.agent_cashback.get_balance(agent_id)
+        return self.agent_credits.get_summary(agent_id)
 
-    async def _handle_cashback_leaderboard(self, args: dict) -> dict:
-        return self.agent_cashback.get_leaderboard(args.get("limit", 10))
+    async def _handle_credits_leaderboard(self, args: dict) -> dict:
+        return self.agent_credits.get_leaderboard(args.get("limit", 10))
+
+    async def _handle_redeem_free_search(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        if not agent_id:
+            return {"error": "agent_id required"}
+        return self.agent_credits.redeem_free_search(agent_id)
 
     async def _handle_optimize_cart(self, args: dict) -> dict:
         items = args.get("items", [])
